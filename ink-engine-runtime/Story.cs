@@ -1586,9 +1586,13 @@ namespace Ink.Runtime
             // Expected to be global story, knot or stitch
             var flowContainer = ContentAtPath (path) as Container;
 
-            // First element of the above constructs is a compiled weave
+            // First element of the above constructs should be a compiled weave
             var innerWeaveContainer = flowContainer.content [0] as Container;
 
+            // If there is no inner container, however, just use the outer one.
+            if (innerWeaveContainer == null) {
+                innerWeaveContainer = flowContainer;
+            }
             // Any initial tag objects count as the "main tags" associated with that story/knot/stitch
             List<string> tags = null;
             foreach (var c in innerWeaveContainer.content) {
