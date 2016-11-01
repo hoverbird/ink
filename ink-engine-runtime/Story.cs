@@ -1417,17 +1417,12 @@ namespace Ink.Runtime
 
 			// Error for all missing externals
 			else {
-				var message = string.Format("Missing function binding for external{0}: '{1}' {2}",
+				var message = string.Format("ERROR: Missing function binding for external{0}: '{1}' {2}",
 					missingExternals.Count > 1 ? "s" : string.Empty,
 					string.Join("', '", missingExternals.ToArray()),
 					allowExternalFunctionFallbacks ? ", and no fallback ink function found." : " (ink fallbacks disabled)"
 				);
 					
-				string errorPreamble = "ERROR: ";
-				if (_mainContentContainer.debugMetadata != null) {
-					errorPreamble += string.Format ("'{0}' line {1}: ", _mainContentContainer.debugMetadata.fileName, _mainContentContainer.debugMetadata.startLineNumber);
-				}
-
 				Error(message);
 			}
         }
@@ -1586,8 +1581,12 @@ namespace Ink.Runtime
             // Expected to be global story, knot or stitch
             var flowContainer = ContentAtPath (path) as Container;
 
-            // First element of the above constructs should be a compiled weave
-            var innerWeaveContainer = flowContainer.content [0] as Container;
+            while(true) {
+                var firstContent = flowContainer.content [0];
+                if (firstContent is Container)
+                    flowContainer = (Container)firstContent;
+                else break;
+            }
 
             // If there is no inner container, however, just use the outer one.
             if (innerWeaveContainer == null) {
@@ -1595,7 +1594,7 @@ namespace Ink.Runtime
             }
             // Any initial tag objects count as the "main tags" associated with that story/knot/stitch
             List<string> tags = null;
-            foreach (var c in innerWeaveContainer.content) {
+            foreach (var c in flowContainer.content) {
                 var tag = c as Runtime.Tag;
                 if (tag) {
                     if (tags == null) tags = new List<string> ();
