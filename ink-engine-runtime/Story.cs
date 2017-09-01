@@ -15,7 +15,7 @@ namespace Ink.Runtime
         /// <summary>
         /// The current version of the ink story file format.
         /// </summary>
-        public const int inkVersionCurrent = 16;
+        public const int inkVersionCurrent = 17;
 
         // Version numbers are for engine itself and story file, rather
         // than the story state save format (which is um, currently nonexistant)
@@ -853,6 +853,7 @@ namespace Ink.Runtime
                     break;
 
                 case ControlCommand.CommandType.TurnsSince:
+                case ControlCommand.CommandType.ReadCount:
                     var target = state.PopEvaluationStack();
                     if( !(target is DivertTargetValue) ) {
                         string extraNote = "";
@@ -864,8 +865,14 @@ namespace Ink.Runtime
                         
                     var divertTarget = target as DivertTargetValue;
                     var container = ContentAtPath (divertTarget.targetPath) as Container;
-                    int turnCount = TurnsSinceForContainer (container);
-                    state.PushEvaluationStack (new IntValue (turnCount));
+
+                    int eitherCount;
+                    if (evalCommand.commandType == ControlCommand.CommandType.TurnsSince)
+                        eitherCount = TurnsSinceForContainer (container);
+                    else
+                        eitherCount = VisitCountForContainer (container);
+                    
+                    state.PushEvaluationStack (new IntValue (eitherCount));
                     break;
 
                 case ControlCommand.CommandType.Random:
@@ -948,6 +955,10 @@ namespace Ink.Runtime
                 case ControlCommand.CommandType.ListFromInt:
                     var intVal = state.PopEvaluationStack () as IntValue;
                     var listNameVal = state.PopEvaluationStack () as StringValue;
+
+					if (intVal == null) { 
+						throw new StoryException ("Passed non-integer when creating a list element from a numerical value."); 
+					}
 
                     ListValue generatedListValue = null;
 
@@ -1721,6 +1732,15 @@ namespace Ink.Runtime
             return sb.ToString ();
         }
 
+        string BuildStringOfContainer (Container container)
+        {
+        	var sb = new StringBuilder ();
+
+        	container.BuildStringOfHierarchy (sb, 0, state.currentContentObject);
+
+        	return sb.ToString();
+        }
+
 		private void NextContent()
 		{
             // Setting previousContentObject is critical for VisitChangedContainersDueToDivert
@@ -1941,8 +1961,9 @@ namespace Ink.Runtime
             if (dm != null) {
                 int lineNum = useEndLineNumber ? dm.endLineNumber : dm.startLineNumber;
                 message = string.Format ("RUNTIME ERROR: '{0}' line {1}: {2}", dm.fileName, lineNum, message);
-            }
-            else {
+            } else if( state.currentPath != null  ) {
+				message = string.Format ("RUNTIME ERROR: ({0}): {1}", state.currentPath, message);
+			} else {
                 message = "RUNTIME ERROR: " + message;
             }
 

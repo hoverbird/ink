@@ -163,7 +163,7 @@ namespace Ink
         {
             Error(message, isWarning:true);
         }
-            
+
 		public bool endOfInput
 		{
 			get { return index >= _chars.Length; }

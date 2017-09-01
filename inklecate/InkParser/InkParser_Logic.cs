@@ -135,8 +135,7 @@ namespace Ink
 
                 definition.name = varName;
 
-                var result = new VariableAssignment (varName, definition);
-                return result;
+                return new VariableAssignment (varName, definition);
             }
 
             return null;
@@ -276,6 +275,8 @@ namespace Ink
             if (logic == null)
                 return null;
 
+            DisallowIncrement (logic);
+
             ContentList contentList = logic as ContentList;
             if (!contentList) {
                 contentList = new ContentList (logic);
@@ -376,11 +377,13 @@ namespace Ink
         protected string Identifier()
         {
             if (_identifierCharSet == null) {
-                _identifierCharSet = new CharacterSet ();
-                _identifierCharSet.AddRange ('A', 'Z');
-                _identifierCharSet.AddRange ('a', 'z');
-                _identifierCharSet.AddRange ('0', '9');
-                _identifierCharSet.Add ('_');
+                (_identifierCharSet = new CharacterSet ())
+                	.AddRange ('A', 'Z')
+                	.AddRange ('a', 'z')
+                	.AddRange ('0', '9')
+                	.Add ('_');
+                // Enable non-ASCII characters for story identifiers.
+                ExtendIdentifierCharacterRanges(_identifierCharSet);
             }
 
             // Parse remaining characters (if any)
