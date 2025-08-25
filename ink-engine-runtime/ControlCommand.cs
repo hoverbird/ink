@@ -2,7 +2,7 @@
 
 namespace Ink.Runtime
 {
-    internal class ControlCommand : Runtime.Object
+    public class ControlCommand : Runtime.Object
     {
         public enum CommandType
         {
@@ -18,6 +18,7 @@ namespace Ink.Runtime
             EndString,
             NoOp,
             ChoiceCount,
+            Turns,
             TurnsSince,
             ReadCount,
             Random,
@@ -29,6 +30,9 @@ namespace Ink.Runtime
             End,
             ListFromInt,
             ListRange,
+            ListRandom,
+            BeginTag,
+            EndTag,
             //----
             TOTAL_VALUES
         }
@@ -43,7 +47,7 @@ namespace Ink.Runtime
         // Require default constructor for serialisation
         public ControlCommand() : this(CommandType.NotSet) {}
 
-        internal override Object Copy()
+        public override Object Copy()
         {
             return new ControlCommand (commandType);
         }
@@ -101,6 +105,11 @@ namespace Ink.Runtime
             return new ControlCommand(CommandType.ChoiceCount);
         }
 
+        public static ControlCommand Turns ()
+        {
+            return new ControlCommand (CommandType.Turns);
+        }
+
         public static ControlCommand TurnsSince() {
             return new ControlCommand(CommandType.TurnsSince);
         }
@@ -147,6 +156,21 @@ namespace Ink.Runtime
         public static ControlCommand ListRange ()
         {
             return new ControlCommand (CommandType.ListRange);
+        }
+
+        public static ControlCommand ListRandom ()
+        {
+            return new ControlCommand (CommandType.ListRandom);
+        }
+
+        public static ControlCommand BeginTag ()
+        {
+            return new ControlCommand (CommandType.BeginTag);
+        }
+
+        public static ControlCommand EndTag ()
+        {
+            return new ControlCommand (CommandType.EndTag);
         }
 
         public override string ToString ()

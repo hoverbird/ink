@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Diagnostics;
 using System.Collections.Generic;
 using System.Linq;
@@ -7,7 +7,7 @@ using System.ComponentModel;
 
 namespace Ink.Runtime
 {
-	internal class Container : Runtime.Object, INamedContent
+	public class Container : Runtime.Object, INamedContent
 	{
 		public string name { get; set; }
 
@@ -119,15 +119,15 @@ namespace Ink.Runtime
         Path internalPathToFirstLeafContent
         {
             get {
-                var path = new Path ();
+				var components = new List<Path.Component>();
                 var container = this;
                 while (container != null) {
                     if (container.content.Count > 0) {
-                        path.components.Add (new Path.Component (0));
+                        components.Add (new Path.Component (0));
                         container = container.content [0] as Container;
                     }
                 }
-                return path;
+				return new Path(components);
             }
         }
 
@@ -221,30 +221,58 @@ namespace Ink.Runtime
                 if (namedContent.TryGetValue (component.name, out foundContent)) {
                     return (Runtime.Object)foundContent;
                 } else {
-                    throw new StoryException ("Content '"+component.name+"' not found at path: '"+this.path+"'");
+                    return null;
                 }
 			}
 		}
 
-        public Runtime.Object ContentAtPath(Path path, int partialPathLength = -1)
+        public SearchResult ContentAtPath(Path path, int partialPathStart = 0, int partialPathLength = -1)
 		{
             if (partialPathLength == -1)
-                partialPathLength = path.components.Count;
-            
+                partialPathLength = path.length;
+
+            var result = new SearchResult ();
+            result.approximate = false;
+
             Container currentContainer = this;
             Runtime.Object currentObj = this;
 
-            for (int i = 0; i < partialPathLength; ++i) {
-                var comp = path.components [i];
-                if (currentContainer == null)
-                    throw new System.Exception ("Path continued, but previous object wasn't a container: " + currentObj);
-                currentObj = currentContainer.ContentWithPathComponent(comp);
-                currentContainer = currentObj as Container;
+            for (int i = partialPathStart; i < partialPathLength; ++i) {
+				var comp = path.GetComponent(i);
+
+                // Path component was wrong type
+                if (currentContainer == null) {
+                    result.approximate = true;
+                    break;
+                }
+
+                var foundObj = currentContainer.ContentWithPathComponent(comp);
+
+                // Couldn't resolve entire path?
+                if (foundObj == null) {
+                    result.approximate = true;
+                    break;
+                } 
+
+                // Are we about to loop into another container?
+                // Is the object a container as expected? It might
+                // no longer be if the content has shuffled around, so what
+                // was originally a container no longer is.
+                var nextContainer = foundObj as Container;
+                if( i < partialPathLength-1 && nextContainer == null ) {
+                    result.approximate = true;
+                    break;
+                }
+
+                currentObj = foundObj;
+                currentContainer = nextContainer;
             }
 
-            return currentObj;
+            result.obj = currentObj;
+
+            return result;
 		}
-            
+         
         public void BuildStringOfHierarchy(StringBuilder sb, int indentation, Runtime.Object pointedObj)
         {
             Action appendIndentation = () => { 

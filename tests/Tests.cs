@@ -4,7 +4,6 @@ using Ink.Runtime;
 using NUnit.Framework;
 using System.Collections.Generic;
 using System.IO;
-using System.Reflection;
 using System.Text;
 using Path = Ink.Runtime.Path;
 
@@ -18,24 +17,20 @@ namespace Tests
 
     [TestFixture(TestMode.Normal)]
     [TestFixture(TestMode.JsonRoundTrip)]
-    internal class Tests
+    public class Tests
     {
-        private List<string> _errorMessages = new List<string>();
-
+        
         private TestMode _mode;
 
         private bool _testingErrors;
-
+        private List<string> _errorMessages = new List<string> ();
         private List<string> _warningMessages = new List<string>();
+        private List<string> _authorMessages = new List<string>();
 
-        public Tests(TestMode mode)
+
+        public Tests (TestMode mode)
         {
-            _mode = mode;            
-            var codeBase = Assembly.GetExecutingAssembly().Location;
-            var uri = new UriBuilder(codeBase);
-            var path = Uri.UnescapeDataString(uri.Path);
-                path = System.IO.Path.GetDirectoryName(path);
-            Directory.SetCurrentDirectory(path);            
+            _mode = mode;
         }
 
         [Test()]
@@ -91,7 +86,7 @@ Nothing
 { 2 * (5-1) }
 ");
 
-            Assert.AreEqual("36\n2\n3\n2\n2"+System.Globalization.NumberFormatInfo.CurrentInfo.NumberDecimalSeparator+"333333\n8\n8\n", story.ContinueMaximally());
+            Assert.AreEqual("36\n2\n3\n2\n2"+System.Globalization.NumberFormatInfo.CurrentInfo.NumberDecimalSeparator+"3333333\n8\n8\n", story.ContinueMaximally());
         }
 
         [Test()]
@@ -159,23 +154,84 @@ Hello
 
             Assert.AreEqual(
 @"1. a
-2. 
+2.
 3. b
 4. b
 ---
-1. 
+1.
 2. a
 3. a
 ---
 1. a
-2. 
-3. 
+2.
+3.
 ---
-1. 
-2. 
-3. 
+1.
+2.
+3.
 ".Replace("\r", ""), story.ContinueMaximally().Replace("\r", ""));
         }
+
+        [Test()]
+        public void TestAllSequenceTypes()
+        {
+            var storyStr =
+                @"
+~ SEED_RANDOM(1)
+
+Once: {f_once()} {f_once()} {f_once()} {f_once()}
+Stopping: {f_stopping()} {f_stopping()} {f_stopping()} {f_stopping()}
+Default: {f_default()} {f_default()} {f_default()} {f_default()}
+Cycle: {f_cycle()} {f_cycle()} {f_cycle()} {f_cycle()}
+Shuffle: {f_shuffle()} {f_shuffle()} {f_shuffle()} {f_shuffle()}
+Shuffle stopping: {f_shuffle_stopping()} {f_shuffle_stopping()} {f_shuffle_stopping()} {f_shuffle_stopping()}
+Shuffle once: {f_shuffle_once()} {f_shuffle_once()} {f_shuffle_once()} {f_shuffle_once()}
+
+== function f_once ==
+{once:
+    - one
+    - two
+}
+
+== function f_stopping ==
+{stopping:
+    - one
+    - two
+}
+
+== function f_default ==
+{one|two}
+
+== function f_cycle ==
+{cycle:
+    - one
+    - two
+}
+
+== function f_shuffle ==
+{shuffle:
+    - one
+    - two
+}
+
+== function f_shuffle_stopping ==
+{stopping shuffle:
+    - one
+    - two
+    - final
+}
+
+== function f_shuffle_once ==
+{shuffle once:
+    - one
+    - two
+}
+                ";
+
+            Story story = CompileString(storyStr);
+            Assert.AreEqual("Once: one two\nStopping: one two two two\nDefault: one two two two\nCycle: one two one two\nShuffle: two one two one\nShuffle stopping: one two final final\nShuffle once: two one\n", story.ContinueMaximally());
+        }
+
 
         [Test()]
         public void TestCallStackEvaluation()
@@ -227,8 +283,7 @@ Hello
             Assert.AreEqual(1, story.currentChoices.Count);
             story.ChooseChoiceIndex(0);
 
-            Assert.AreEqual("choice\n", story.Continue());
-            Assert.IsFalse(story.hasError);
+            Assert.AreEqual("choice", story.Continue());
         }
 
         [Test()]
@@ -343,8 +398,8 @@ two ({num})
  {
     - true: * [go to a stitch] -> a_stitch
  }
-- gather shouldn't be seen
--> END
+- gather should be seen
+-> DONE
 
 = a_stitch
     result
@@ -353,9 +408,7 @@ two ({num})
 
             Story story = CompileString(storyStr);
 
-            // Extra newline is because there's a choice object sandwiched there,
-            // so it can't be absorbed :-/
-            Assert.AreEqual("start\n", story.Continue());
+            Assert.AreEqual("start\ngather should be seen\n", story.ContinueMaximally());
             Assert.AreEqual(1, story.currentChoices.Count);
 
             story.ChooseChoiceIndex(0);
@@ -369,14 +422,13 @@ two ({num})
             var storyStr =
                 @"
 - first gather
-    * option 1
-    * option 2
+    * [option 1]
+    * [option 2]
 - the main gather
 {false:
-    * unreachable option
+    * unreachable option -> END
 }
-- unrechable gather
-                ";
+- bottom gather";
 
             Story story = CompileString(storyStr);
 
@@ -386,7 +438,7 @@ two ({num})
 
             story.ChooseChoiceIndex(0);
 
-            Assert.AreEqual("option 1\nthe main gather\n", story.ContinueMaximally());
+            Assert.AreEqual("the main gather\nbottom gather\n", story.ContinueMaximally());
             Assert.AreEqual(0, story.currentChoices.Count);
         }
 
@@ -648,6 +700,35 @@ VAR x = 3
             Assert.AreEqual("", story.Continue());
         }
 
+
+        [Test ()]
+        public void TestAllSwitchBranchesFailIsClean ()
+        {
+        	var story = CompileString (@"
+{ 1:
+    - 2: x
+    - 3: y
+}
+        ");
+
+            story.Continue ();
+
+        	Assert.IsTrue (story.state.evaluationStack.Count == 0);
+        }
+
+        [Test ()]
+        public void TestTrivialCondition ()
+        {
+        	var story = CompileString (@"
+{
+- false:
+   beep
+}
+                ");
+
+        	story.Continue ();
+        }
+
         [Test()]
         public void TestEmptySequenceContent()
         {
@@ -709,7 +790,6 @@ world
 
             story = CompileString("== test ==\nContent\n-> END");
             story.ContinueMaximally();
-            Assert.IsFalse(story.hasError);
 
             // Should have runtime error due to running out of content
             // (needs a -> END)
@@ -774,9 +854,52 @@ EXTERNAL times(i,str)
 
             Assert.AreEqual("15\n", story.Continue());
 
-            Assert.AreEqual("knock knock knock \n", story.Continue());
+            Assert.AreEqual("knock knock knock\n", story.Continue());
 
             Assert.AreEqual("MESSAGE: hello world", message);
+        }
+
+        [Test()]
+        public void TestLookupSafeOrNot()
+        {
+            var story = CompileString(@"
+EXTERNAL myAction()
+
+One
+~ myAction()
+Two
+");
+
+            // Lookahead SAFE - should get multiple calls to the ext function,
+            // one for lookahead on first line, one "for real" on second line.
+            int callCount = 0;
+            story.BindExternalFunction("myAction", () => callCount++, lookaheadSafe:true);
+
+            story.ContinueMaximally();
+            Assert.AreEqual(2, callCount);
+
+            // Lookahead UNSAFE - when it sees the function, it should break out early
+            // and stop lookahead, making sure that the action is only called for the second line.
+            callCount = 0;
+            story.ResetState();
+            story.UnbindExternalFunction("myAction");
+            story.BindExternalFunction("myAction", () => callCount++, lookaheadSafe:false);
+
+            story.ContinueMaximally();
+            Assert.AreEqual(1, callCount);
+
+            // Lookahead SAFE but breaks glue intentionally
+            var storyWithPostGlue = CompileString(@"
+EXTERNAL myAction()
+
+One 
+~ myAction()
+<> Two
+");
+
+            storyWithPostGlue.BindExternalFunction("myAction", () => {});
+            var result = storyWithPostGlue.ContinueMaximally();
+            Assert.AreEqual("One\nTwo\n", result);
         }
 
         [Test()]
@@ -990,7 +1113,7 @@ X
 }
 ");
 
-            Assert.AreEqual ("A \nX\n", story.ContinueMaximally ());
+            Assert.AreEqual ("A\nX\n", story.ContinueMaximally ());
         }
 
         [Test ()]
@@ -1070,6 +1193,43 @@ CONST Y = 2
             Assert.IsTrue(_warningMessages.Count == 0);
         }
 
+
+        [Test ()]
+        public void TestLooseEnds ()
+        {
+        	CompileStringWithoutRuntime (
+@"No loose ends in main content.
+
+== knot1 ==
+* loose end choice
+* loose end
+	on second line of choice
+
+== knot2 ==
+* A
+* B
+TODO: Fix loose ends but don't warn
+
+== knot3 ==
+Loose end when there's no weave
+
+== knot4 ==
+{true:
+    {false:
+        Ignore loose end when there's a divert
+        in a conditional.
+        -> knot4
+	}
+}
+        ", testingErrors: true);
+
+            Assert.IsTrue (_warningMessages.Count == 3);
+            Assert.IsTrue (HadWarning ("line 4: Apparent loose end"));
+            Assert.IsTrue (HadWarning ("line 6: Apparent loose end"));
+            Assert.IsTrue (HadWarning ("line 14: Apparent loose end"));
+            Assert.IsTrue (_authorMessages.Count == 1);
+        }
+
         [Test()]
         public void TestKnotThreadInteraction()
         {
@@ -1101,7 +1261,6 @@ CONST Y = 2
             story.ChooseChoiceIndex(1);
             Assert.AreEqual("wigwag\n", story.Continue());
             Assert.AreEqual("THE END\n", story.Continue());
-            Assert.IsFalse(story.hasError);
         }
 
         [Test()]
@@ -1132,7 +1291,6 @@ CONST Y = 2
 
             story.ChooseChoiceIndex(0);
             Assert.AreEqual("I’m an option\nFinishing thread.\n", story.ContinueMaximally());
-            Assert.IsFalse(story.hasError);
         }
 
         [Test()]
@@ -1161,7 +1319,7 @@ VAR negativeLiteral3 = !(0)
 {negativeLiteral2}
 {negativeLiteral3}
 ");
-            Assert.AreEqual("-1\n0\n1\n", story.ContinueMaximally());
+            Assert.AreEqual("-1\nfalse\ntrue\n", story.ContinueMaximally());
         }
 
         [Test()]
@@ -1224,7 +1382,6 @@ This is place 2.
 
             story.ChooseChoiceIndex(0);
             Assert.AreEqual("choice in place 1\nThe end\n", story.ContinueMaximally());
-            Assert.IsFalse(story.hasError);
         }
 
         [Test()]
@@ -1267,7 +1424,7 @@ VAR globalVal = 5
             Story story = CompileString(storyStr);
 
             // Bloody whitespace
-            Assert.AreEqual("5\n \n625\n", story.ContinueMaximally());
+            Assert.AreEqual("5\n625\n", story.ContinueMaximally());
         }
 
         [Test()]
@@ -1289,8 +1446,7 @@ VAR globalVal = 5
             story.Continue();
 
             story.ChooseChoiceIndex(0);
-            Assert.AreEqual("option text. Conditional bit.\n", story.Continue());
-            Assert.AreEqual("Next.\n", story.Continue());
+            Assert.AreEqual("option text. Conditional bit. Next.\n", story.Continue());
         }
 
         [Test()]
@@ -1524,6 +1680,7 @@ In second.
 
 = aside
     * {false} DONE
+	- -> DONE
 ");
             Assert.AreEqual("1\n1\n", story.ContinueMaximally());
         }
@@ -1602,6 +1759,7 @@ as fast as we could.
 * opt
     - - text
     * * {false} impossible
+    * * -> END
 - gather");
 
             story.ContinueMaximally();
@@ -1747,10 +1905,10 @@ CONST kX = ""hi""
             story.ContinueMaximally();
 
             Assert.AreEqual(1, story.currentChoices.Count);
-            Assert.AreEqual(@" test1 ""test2 test3""", story.currentChoices[0].text);
+            Assert.AreEqual(@"test1 ""test2 test3""", story.currentChoices[0].text);
 
             story.ChooseChoiceIndex(0);
-            Assert.AreEqual(" test1  test4\n", story.Continue());
+            Assert.AreEqual("test1 test4\n", story.Continue());
         }
 
         [Test()]
@@ -1836,6 +1994,7 @@ Done.
 == thread_with_options ==
 * C
 * D
+- -> DONE
 ");
 
             Assert.IsFalse(story.ContinueMaximally().Contains("Finished tunnel"));
@@ -2037,7 +2196,7 @@ VAR x = 5
             Assert.AreEqual(null, story.variablesState["z"]);
 
             // Not allowed arbitrary types
-            Assert.Throws<StoryException>(() =>
+            Assert.Throws<Exception>(() =>
             {
                 story.variablesState["x"] = new System.Text.StringBuilder();
             });
@@ -2235,7 +2394,7 @@ this is the end
 -> END
 ";
 
-            Story story = CompileString(storyStr);
+            Story story = CompileString(storyStr, countAllVisits:true);
 
             Assert.AreEqual (0, story.state.VisitCountAtPathString ("TestKnot"));
             Assert.AreEqual (0, story.state.VisitCountAtPathString ("TestKnot2"));
@@ -2262,6 +2421,24 @@ this is the end
 
             Assert.AreEqual (1, story.state.VisitCountAtPathString ("TestKnot"));
             Assert.AreEqual (1, story.state.VisitCountAtPathString ("TestKnot2"));
+        }
+
+        // https://github.com/inkle/ink/issues/539
+        [Test()]
+        public void TestVisitCountBugDueToNestedContainers()
+        {
+            var storyStr = @"
+                - (gather) {gather}
+                * choice
+                - {gather}
+            ";
+
+            Story story = CompileString(storyStr);
+
+            Assert.AreEqual("1\n", story.Continue());
+
+            story.ChooseChoiceIndex(0);
+            Assert.AreEqual("choice\n1\n", story.ContinueMaximally());
         }
 
         [Test()]
@@ -2330,10 +2507,10 @@ Content
             story.Continue ();
                  
             Assert.AreEqual (1, story.currentChoices.Count);
-            Assert.AreEqual (" 1", story.currentChoices[0].text);
+            Assert.AreEqual ("1", story.currentChoices[0].text);
             story.ChooseChoiceIndex (0);
 
-            Assert.AreEqual (" 1\nEnd of choice\nthis  another\n", story.ContinueMaximally ());
+            Assert.AreEqual ("1\nEnd of choice\nthis another\n", story.ContinueMaximally ());
 
             Assert.AreEqual (0, story.currentChoices.Count);
         }
@@ -2348,11 +2525,11 @@ Top level content
 * choice
 
 == somewhere ==
-= else
+= here
 -> DONE
 
 == function test ==
-~ return -> somewhere.else
+~ return -> somewhere.here
 ";
 
             Story story = CompileString (storyStr);
@@ -2361,7 +2538,7 @@ Top level content
             var returnedDivertTarget = story.EvaluateFunction ("test");
 
             // Divert target should get returned as a string
-            Assert.AreEqual ("somewhere.else", returnedDivertTarget);
+            Assert.AreEqual ("somewhere.here", returnedDivertTarget);
         }
 
         [Test ()]
@@ -2639,7 +2816,7 @@ LIST list = a, (b), c, (d), e
 ";
             var story = CompileString (storyStr);
 
-            Assert.AreEqual ("b, d\na, b, c, e\nb, c\n0\n1\n1\n", story.ContinueMaximally ());
+            Assert.AreEqual ("b, d\na, b, c, e\nb, c\nfalse\ntrue\ntrue\n", story.ContinueMaximally ());
         }
 
 
@@ -2695,6 +2872,23 @@ LIST list = a, b
 
             Assert.AreEqual ("a, b\n", story.ContinueMaximally ());
         }
+
+
+                [Test ()]
+        public void TestContainsEmptyListAlwaysFalse ()
+        {
+            var storyStr =
+                @"
+LIST list = (a), b
+{list ? ()}
+{() ? ()}
+{() ? list}
+";
+            var story = CompileString (storyStr);
+
+            Assert.AreEqual ("false\nfalse\nfalse\n", story.ContinueMaximally ());
+        }
+
 
         [Test ()]
         public void TestEmptyListOriginAfterAssignment ()
@@ -2772,6 +2966,7 @@ TODO: b
 { shuffle:
 -   * choice
     nextline
+    -> END
 }
 ";
             var story = CompileString (storyStr);
@@ -2784,6 +2979,38 @@ TODO: b
 
             Assert.AreEqual ("choice\nnextline\n", story.ContinueMaximally ());
         }
+
+
+        [Test()]
+        public void TestNestedChoiceError()
+        {
+            var storyStr =
+                @"
+{ true:
+    * choice
+}
+";
+            CompileString(storyStr, testingErrors:true);
+            Assert.IsTrue(HadError("need to explicitly divert"));
+        }
+
+
+        [Test ()]
+        public void TestStitchNamingCollision ()
+        {
+            var storyStr =
+                @"
+VAR stitch = 0
+
+== knot ==
+= stitch
+->DONE
+";
+            CompileString (storyStr, countAllVisits: false, testingErrors: true);
+
+            Assert.IsTrue (HadError ("already been used for a var"));
+        }
+
 
         [Test ()]
         public void TestWeavePointNamingCollision ()
@@ -2862,13 +3089,24 @@ Unreachable
 * ->
    - - 2
 - 3
-* [] ->
-- 4
 -> END
 ";
 
             var story = CompileString (storyStr);
-            Assert.AreEqual ("1\n2\n3\n4\n", story.ContinueMaximally ());
+            Assert.AreEqual ("1\n2\n3\n", story.ContinueMaximally ());
+        }
+
+
+        [Test ()]
+        public void TestVariousBlankChoiceWarning ()
+        {
+        	var storyStr =
+        @"
+* [] blank
+        ";
+
+        	CompileString (storyStr, testingErrors:true);
+            Assert.IsTrue (HadWarning ("Blank choice"));
         }
 
         [Test ()]
@@ -2888,6 +3126,30 @@ Unreachable
 
             var story = CompileString (storyStr);
             Assert.AreEqual ("8\n", story.ContinueMaximally ());
+        }
+
+
+        [Test ()]
+        public void TestTunnelOnwardsToVariableDivertTarget ()
+        {
+            var storyStr =
+@"
+-> outer ->
+
+== outer
+This is outer
+-> cut_to(-> the_esc)
+
+=== cut_to(-> escape) 
+    ->-> escape
+    
+== the_esc
+This is the_esc
+-> END
+";
+
+            var story = CompileString (storyStr);
+            Assert.AreEqual ("This is outer\nThis is the_esc\n", story.ContinueMaximally ());
         }
 
 
@@ -2938,25 +3200,808 @@ VAR x = ->place
         }
 
         [Test ()]
-        public void TestTagOnChoice ()
+        public void TestTagsInSeq()
+        {
+            var storyStr = 
+@"
+-> knot -> knot ->
+== knot
+A {red #red|white #white|blue #blue|green #green} sequence.
+->->
+";
+            var story = CompileString (storyStr);
+
+            Assert.AreEqual ("A red sequence.\n", story.Continue ());
+            Assert.AreEqual (new List<string> {"red"}, story.currentTags);
+
+            Assert.AreEqual ("A white sequence.\n", story.Continue ());
+            Assert.AreEqual (new List<string> {"white"}, story.currentTags);
+        }
+
+        [Test ()]
+        public void TestTagsInChoice()
+        {
+            var storyStr = @"+ one #one [two #two] three #three -> END";
+            var story = CompileString (storyStr);
+
+            story.Continue ();
+            Assert.AreEqual (0, story.currentTags.Count);
+            Assert.AreEqual (1, story.currentChoices.Count);
+            Assert.AreEqual (new List<string> {"one", "two"}, story.currentChoices[0].tags);
+
+            story.ChooseChoiceIndex(0);
+
+            Assert.AreEqual ("one three", story.Continue ());
+            Assert.AreEqual (new List<string> {"one", "three"}, story.currentTags);
+        }
+
+        [Test ()]
+        public void TestTagsDynamicContent()
+        {
+            var storyStr = @"tag # pic{5+3}{red|blue}.jpg";
+            var story = CompileString (storyStr);
+
+            Assert.AreEqual ("tag\n", story.Continue ());
+            Assert.AreEqual (new List<string> {"pic8red.jpg"}, story.currentTags);
+        }
+
+        [Test ()]
+        public void TestStringContains ()
+        {
+        	var storyStr =
+@"
+{""hello world"" ? ""o wo""}
+{""hello world"" ? ""something else""}
+{""hello"" ? """"}
+{"""" ? """"}
+";
+
+        	var story = CompileString (storyStr);
+
+        	var result = story.ContinueMaximally ();
+
+        	Assert.AreEqual ("true\nfalse\ntrue\ntrue\n", result);
+        }
+
+        [Test ()]
+        public void TestEvaluationStackLeaks ()
+        {
+        	var storyStr =
+@"
+{false:
+    
+- else: 
+    else
+}
+
+{6:
+- 5: five
+- else: else
+}
+
+-> onceTest ->
+-> onceTest ->
+
+== onceTest ==
+{once:
+- hi
+}
+->->
+";
+
+        	var story = CompileString (storyStr);
+
+        	var result = story.ContinueMaximally ();
+
+        	Assert.AreEqual ("else\nelse\nhi\n", result);
+            Assert.IsTrue (story.state.evaluationStack.Count == 0);
+        }
+
+        [Test ()]
+        public void TestGameInkBackAndForth ()
+        {
+        	var storyStr =
+            @"
+EXTERNAL gameInc(x)
+
+== function topExternal(x)
+In top external
+~ return gameInc(x)
+
+== function inkInc(x)
+~ return x + 1
+
+            ";
+
+        	var story = CompileString (storyStr);
+
+            // Crazy game/ink callstack:
+            // - Game calls "topExternal(5)" (Game -> ink)
+            // - topExternal calls gameInc(5) (ink -> Game)
+            // - gameInk increments to 6
+            // - gameInk calls inkInc(6) (Game -> ink)
+            // - inkInc just increments to 7 (ink)
+            // And the whole thing unwinds again back to game.
+
+            story.BindExternalFunction("gameInc", (int x) => {
+                x++;
+                x = (int) story.EvaluateFunction ("inkInc", x);
+                return x;
+            });
+
+            string strResult;
+            var finalResult = (int) story.EvaluateFunction ("topExternal", out strResult, 5);
+
+            Assert.AreEqual (7, finalResult);
+            Assert.AreEqual ("In top external\n", strResult);
+        }
+
+
+        [Test ()]
+        public void TestNewlinesWithStringEval ()
+        {
+        	var storyStr =
+@"
+A
+~temp someTemp = string()
+B
+
+A 
+{string()}
+B
+
+=== function string()    
+    ~ return ""{3}""
+}
+";
+
+        	var story = CompileString (storyStr);
+
+        	Assert.AreEqual ("A\nB\nA\n3\nB\n", story.ContinueMaximally ());
+        }
+
+
+        [Test ()]
+        public void TestNewlinesTrimmingWithFuncExternalFallback ()
+        {
+        	var storyStr =
+@"
+EXTERNAL TRUE ()
+
+Phrase 1 
+{ TRUE ():
+
+	Phrase 2
+}
+-> END 
+
+=== function TRUE ()
+	~ return true
+";
+
+        	var story = CompileString (storyStr);
+            story.allowExternalFunctionFallbacks = true;
+
+        	Assert.AreEqual ("Phrase 1\nPhrase 2\n", story.ContinueMaximally ());
+        }
+
+        [Test ()]
+        public void TestMultilineLogicWithGlue ()
+        {
+        	var storyStr =
+@"
+{true:
+    a 
+} <> b
+
+
+{true:
+    a 
+} <> { true: 
+    b 
+}
+";
+        	var story = CompileString (storyStr);
+
+        	Assert.AreEqual ("a b\na b\n", story.ContinueMaximally ());
+        }
+
+
+
+        [Test ()]
+        public void TestNewlineAtStartOfMultilineConditional ()
+        {
+        	var storyStr =
+        @"
+{isTrue():
+    x
+}
+
+=== function isTrue()
+    X
+	~ return true
+        ";
+        	var story = CompileString (storyStr);
+
+        	Assert.AreEqual ("X\nx\n", story.ContinueMaximally ());
+        }
+
+        [Test ()]
+        public void TestTempNotFound ()
+        {
+        	var storyStr =
+        @"
+{x}
+~temp x = 5
+hello
+                ";
+        	var story = CompileString (storyStr, testingErrors:true);
+
+        	Assert.AreEqual ("0\nhello\n", story.ContinueMaximally ());
+
+        	Assert.IsTrue (HadWarning());
+        }
+
+
+        [Test ()]
+        public void TestTempNotAllowedCrossStitch ()
+        {
+        	var storyStr =
+                @"
+-> knot.stitch
+
+== knot (y) ==
+~temp x = 5
+-> END
+
+= stitch
+{x} {y}
+-> END
+			";
+            
+        	CompileStringWithoutRuntime (storyStr, testingErrors:true);
+
+            Assert.IsTrue (HadError ("Unresolved variable: x"));
+            Assert.IsTrue (HadError ("Unresolved variable: y"));
+        }
+
+
+
+        [Test ()]
+        public void TestTopFlowTerminatorShouldntKillThreadChoices ()
+        {
+        	var storyStr =
+        		@"
+<- move
+Limes 
+
+=== move
+	* boop
+        -> END
+                    ";
+
+            var story = CompileString (storyStr);
+
+            Assert.AreEqual ("Limes\n", story.Continue ());
+            Assert.IsTrue (story.currentChoices.Count == 1);
+        }
+
+
+        [Test ()]
+        public void TestNewlineConsistency ()
+        {
+        	var storyStr =
+        		@"
+hello -> world
+== world
+world 
+-> END";
+
+        	var story = CompileString (storyStr);
+        	Assert.AreEqual ("hello world\n", story.ContinueMaximally ());
+
+            storyStr =
+	@"
+* hello -> world
+== world
+world 
+-> END";
+            story = CompileString (storyStr);
+
+            story.Continue ();
+            story.ChooseChoiceIndex (0);
+            Assert.AreEqual ("hello world\n", story.ContinueMaximally ());
+
+
+            storyStr =
+    @"
+* hello 
+	-> world
+== world
+world 
+-> END";
+            story = CompileString (storyStr);
+
+            story.Continue ();
+            story.ChooseChoiceIndex (0);
+            Assert.AreEqual ("hello\nworld\n", story.ContinueMaximally ());
+        }
+
+
+        [Test ()]
+        public void TestListRandom ()
         {
             var storyStr =
-@"
-* [Hi] Hello -> END #hey
+                @"
+LIST l = A, (B), (C), (D), E
+{LIST_RANDOM(l)}
+{LIST_RANDOM (l)}
+{LIST_RANDOM (l)}
+{LIST_RANDOM (l)}
+{LIST_RANDOM (l)}
+{LIST_RANDOM (l)}
+{LIST_RANDOM (l)}
+{LIST_RANDOM (l)}
+{LIST_RANDOM (l)}
+{LIST_RANDOM (l)}
+                    ";
+
+            var story = CompileString (storyStr);
+
+            while (story.canContinue) {
+                var result = story.Continue ();
+                Assert.IsTrue (result == "B\n" || result == "C\n" || result == "D\n");
+            }
+        }
+
+
+        [Test ()]
+        public void TestTurns ()
+        {
+            var storyStr =
+                @"
+-> c
+- (top)
++ (c) [choice]
+    {TURNS ()}
+    -> top
+                    ";
+
+            var story = CompileString (storyStr);
+
+            for (int i = 0; i < 10; i++) {
+                Assert.AreEqual(i + "\n", story.Continue ());
+                story.ChooseChoiceIndex (0);
+            }
+        }
+
+
+
+
+        [Test ()]
+        public void TestLogicLinesWithNewlines ()
+        {
+            // Both "~" lines should be followed by newlines
+            // since func() has a text output side effect.
+            var storyStr =
+        @"
+~ func ()
+text 2
+
+~temp tempVar = func ()
+text 2
+
+== function func ()
+	text1
+	~ return true
 ";
 
             var story = CompileString (storyStr);
 
-            story.Continue ();
+            Assert.AreEqual("text1\ntext 2\ntext1\ntext 2\n", story.ContinueMaximally ());
+        }
 
-            story.ChooseChoiceIndex (0);
+        [Test()]
+        public void TestFloorCeilingAndCasts()
+        {
+            var storyStr =
+        @"
+{FLOOR(1.2)}
+{INT(1.2)}
+{CEILING(1.2)}
+{CEILING(1.2) / 3}
+{INT(CEILING(1.2)) / 3}
+{FLOOR(1)}
+";
 
-            var txt = story.Continue ();
-            var tags = story.currentTags;
+            var story = CompileString(storyStr);
 
-            Assert.AreEqual (" Hello\n", txt); // argh need to fix space?
-            Assert.AreEqual (1, tags.Count);
-            Assert.AreEqual ("hey", tags[0]);
+            Assert.AreEqual("1\n1\n2\n0.6666667\n0\n1\n", story.ContinueMaximally());
+        }
+
+        [Test()]
+        public void TestListRange()
+        {
+            var storyStr =
+        @"
+LIST Food = Pizza, Pasta, Curry, Paella
+LIST Currency = Pound, Euro, Dollar
+LIST Numbers = One, Two, Three, Four, Five, Six, Seven
+
+VAR all = ()
+~ all = LIST_ALL(Food) + LIST_ALL(Currency)
+{all}
+{LIST_RANGE(all, 2, 3)}
+{LIST_RANGE(LIST_ALL(Numbers), Two, Six)}
+{LIST_RANGE(LIST_ALL(Numbers), Currency, Three)}
+{LIST_RANGE((Pizza, Pasta), -1, 100)} // allow out of range
+";
+
+            var story = CompileString(storyStr);
+
+            Assert.AreEqual(
+@"Pound, Pizza, Euro, Pasta, Dollar, Curry, Paella
+Euro, Pasta, Dollar, Curry
+Two, Three, Four, Five, Six
+One, Two, Three
+Pizza, Pasta
+".Replace(Environment.NewLine, "\n"), story.ContinueMaximally());
+        }
+           
+        // Fix for rogue "can't use as sub-expression" bug
+        [Test()]
+        public void TestUsingFunctionAndIncrementTogether()
+        {
+            var storyStr =
+        @"
+VAR x = 5
+~ x += one()
+    
+=== function one()
+~ return 1
+";
+             
+            // Ensure it just compiles
+            CompileStringWithoutRuntime(storyStr);
+        }
+
+        // Fix for rogue "can't use as sub-expression" bug
+        [Test()]
+        public void TestKnotStitchGatherCounts()
+        {
+            var storyStr =
+        @"
+VAR knotCount = 0
+VAR stitchCount = 0
+
+-> gather_count_test ->
+
+~ knotCount = 0
+-> knot_count_test ->
+
+~ knotCount = 0
+-> knot_count_test ->
+
+-> stitch_count_test ->
+
+== gather_count_test ==
+VAR gatherCount = 0
+- (loop)
+~ gatherCount++
+{gatherCount} {loop}
+{gatherCount<3:->loop}
+->->
+
+== knot_count_test ==
+~ knotCount++
+{knotCount} {knot_count_test}
+{knotCount<3:->knot_count_test}
+->->
+
+
+== stitch_count_test ==
+~ stitchCount = 0
+-> stitch ->
+~ stitchCount = 0
+-> stitch ->
+->->
+
+= stitch
+~ stitchCount++
+{stitchCount} {stitch}
+{stitchCount<3:->stitch}
+->->
+";
+
+            // Ensure it just compiles
+            var story = CompileString(storyStr);
+
+            Assert.AreEqual(
+@"1 1
+2 2
+3 3
+1 1
+2 1
+3 1
+1 2
+2 2
+3 2
+1 1
+2 1
+3 1
+1 2
+2 2
+3 2
+".Replace(Environment.NewLine, "\n"), story.ContinueMaximally());
+        }
+
+        // Fix for threads being incorrectly reused between choices
+        // and the main thread after save/reload
+        // https://github.com/inkle/ink/issues/463
+        [Test()]
+        public void TestChoiceThreadForking()
+        {
+            var storyStr =
+        @"
+-> generate_choice(1) ->
+
+== generate_choice(x) ==
+{true:
+    + A choice
+        Vaue of local var is: {x}
+        -> END
+}
+->->
+";
+
+            // Generate the choice with the forked thread
+            var story = CompileString(storyStr);
+            story.Continue();
+
+            // Save/reload
+            var savedState = story.state.ToJson();
+            story = CompileString(storyStr);
+            story.state.LoadJson(savedState);
+
+            // Load the choice, it should have its own thread still
+            // that still has the captured temp x
+            story.ChooseChoiceIndex(0);
+            story.ContinueMaximally();
+
+            // Don't want this warning:
+            // RUNTIME WARNING: '' line 7: Variable not found: 'x'
+            Assert.IsFalse(story.hasWarning);
+        }
+
+
+        [Test()]
+        public void TestFallbackChoiceOnThread()
+        {
+            var storyStr =
+        @"
+<- knot
+
+== knot
+   ~ temp x = 1
+   *   ->
+       Should be 1 not 0: {x}.
+       -> DONE
+";
+
+            var story = CompileString(storyStr);
+            Assert.AreEqual("Should be 1 not 0: 1.\n", story.Continue());
+        }
+
+        // Test for bug where after a call to ChoosePathString,
+        // the callstack is not fully/cleanly reset, e.g. leaving
+        // "inExpressionEvaluation" variable left to true, as set during
+        // the call to {RunAThing()}.
+        // This was when we unwound the callstack, but we didn't reset
+        // the base element.
+        [Test()]
+        public void TestCleanCallstackResetOnPathChoice()
+        {
+            var storyStr =
+        @"
+{RunAThing()}
+
+== function RunAThing ==
+The first line.
+The second line.
+
+== SomewhereElse ==
+{""somewhere else""}
+->END
+";
+
+            var story = CompileString(storyStr);
+
+            Assert.AreEqual("The first line.\n", story.Continue());
+
+            story.ChoosePathString("SomewhereElse");
+
+            Assert.AreEqual("somewhere else\n", story.ContinueMaximally());
+        }
+
+
+        // Test for bug where choice's owned thread would get 
+        // reused between re-runs after a state reset, and in
+        // this case would be in the middle of expression evaluation
+        // at the time, causing an error.
+        // Fixed by re-forking the choice thread
+        // in TryFollowDefaultInvisibleChoice
+        [Test()]
+        public void TestStateRollbackOverDefaultChoice()
+        {
+            var storyStr =
+        @"
+<- make_default_choice
+Text.
+
+=== make_default_choice
+    *   -> 
+        {5}
+        -> END 
+";
+
+            var story = CompileString(storyStr);
+
+            Assert.AreEqual("Text.\n", story.Continue());
+            Assert.AreEqual("5\n", story.Continue());
+        }
+
+        // Bools used to be represented purely
+        // using ints. However as of September 2020
+        // we decided to add "proper" bools but with the
+        // original semantics that made the int-based bools
+        // useful - i.e. the ability to easily upgrade
+        // a simple bool flag to a counter. Therefore we
+        // get the slightly nausia-inducing "true + 1 == 2",
+        // "1 == true", etc. It's for the best though, I promise!
+        [Test()]
+        public void TestBools()
+        {
+            Assert.AreEqual("true\n", CompileString("{true}").Continue());
+            Assert.AreEqual("2\n", CompileString("{true + 1}").Continue());
+            Assert.AreEqual("3\n", CompileString("{2 + true}").Continue());
+            Assert.AreEqual("0\n", CompileString("{false + false}").Continue());
+            Assert.AreEqual("2\n", CompileString("{true + true}").Continue());
+            Assert.AreEqual("true\n", CompileString("{true == 1}").Continue());
+            Assert.AreEqual("false\n", CompileString("{not 1}").Continue());
+            Assert.AreEqual("false\n", CompileString("{not true}").Continue());
+            Assert.AreEqual("true\n", CompileString("{3 > 1}").Continue());
+
+            var listHasntStory = @"
+                LIST list = a, (b), c, (d), e
+                {list !? (c)}
+            ";
+            Assert.AreEqual("true\n", CompileString(listHasntStory).Continue());
+        }
+
+
+        [Test()]
+        public void TestMultiFlowBasics()
+        {
+            var storyStr =
+        @"
+=== knot1
+knot 1 line 1
+knot 1 line 2
+-> END 
+
+=== knot2
+knot 2 line 1
+knot 2 line 2
+-> END 
+";
+
+            var story = CompileString(storyStr);
+
+            story.SwitchFlow("First");
+            story.ChoosePathString("knot1");
+            Assert.AreEqual("knot 1 line 1\n", story.Continue());
+
+            story.SwitchFlow("Second");
+            story.ChoosePathString("knot2");
+            Assert.AreEqual("knot 2 line 1\n", story.Continue());
+
+            story.SwitchFlow("First");
+            Assert.AreEqual("knot 1 line 2\n", story.Continue());
+
+            story.SwitchFlow("Second");
+            Assert.AreEqual("knot 2 line 2\n", story.Continue());
+        }
+
+        [Test()]
+        public void TestMultiFlowSaveLoadThreads()
+        {
+            var storyStr =
+        @"
+Default line 1
+Default line 2
+
+== red ==
+Hello I'm red
+<- thread1(""red"")
+<- thread2(""red"")
+-> DONE
+
+== blue ==
+Hello I'm blue
+<- thread1(""blue"")
+<- thread2(""blue"")
+-> DONE
+
+== thread1(name) ==
++ Thread 1 {name} choice
+    -> thread1Choice(name)
+
+== thread2(name) ==
++ Thread 2 {name} choice
+    -> thread2Choice(name)
+
+== thread1Choice(name) ==
+After thread 1 choice ({name})
+-> END
+
+== thread2Choice(name) ==
+After thread 2 choice ({name})
+-> END
+";
+
+            var story = CompileString(storyStr);
+            
+            // Default flow
+            Assert.AreEqual("Default line 1\n", story.Continue());
+
+            story.SwitchFlow("Blue Flow");
+            story.ChoosePathString("blue");
+            Assert.AreEqual("Hello I'm blue\n", story.Continue());
+
+            story.SwitchFlow("Red Flow");
+            story.ChoosePathString("red");
+            Assert.AreEqual("Hello I'm red\n", story.Continue());
+
+            // Test existing state remains after switch (blue)
+            story.SwitchFlow("Blue Flow");
+            Assert.AreEqual("Hello I'm blue\n", story.currentText);
+            Assert.AreEqual("Thread 1 blue choice", story.currentChoices[0].text);
+
+            // Test existing state remains after switch (red)
+            story.SwitchFlow("Red Flow");
+            Assert.AreEqual("Hello I'm red\n", story.currentText);
+            Assert.AreEqual("Thread 1 red choice", story.currentChoices[0].text);
+
+            // Save/load test
+            var saved = story.state.ToJson();
+            
+            // Test choice before reloading state before resetting
+            story.ChooseChoiceIndex(0);
+            Assert.AreEqual("Thread 1 red choice\nAfter thread 1 choice (red)\n", story.ContinueMaximally());
+            story.ResetState();
+
+            // Load to pre-choice: still red, choose second choice
+            story.state.LoadJson(saved);
+
+            story.ChooseChoiceIndex(1);
+            Assert.AreEqual("Thread 2 red choice\nAfter thread 2 choice (red)\n", story.ContinueMaximally());
+
+            
+            // Load: switch to blue, choose 1
+            story.state.LoadJson(saved);
+            story.SwitchFlow("Blue Flow");
+            story.ChooseChoiceIndex(0);
+            Assert.AreEqual("Thread 1 blue choice\nAfter thread 1 choice (blue)\n", story.ContinueMaximally());
+
+            // Load: switch to blue, choose 2
+            story.state.LoadJson(saved);
+            story.SwitchFlow("Blue Flow");
+            story.ChooseChoiceIndex(1);
+            Assert.AreEqual("Thread 2 blue choice\nAfter thread 2 choice (blue)\n", story.ContinueMaximally());
+
+            // Remove active blue flow, should revert back to global flow
+            story.RemoveFlow("Blue Flow");
+            Assert.AreEqual("Default line 2\n", story.Continue());
         }
 
         // Helper compile function
@@ -2965,20 +4010,27 @@ VAR x = ->place
             _testingErrors = testingErrors;
             _errorMessages.Clear();
             _warningMessages.Clear();
+            _authorMessages.Clear ();
 
-            InkParser parser = new InkParser(str, null, TestErrorHandler);
+            InkParser parser = new InkParser(str, null, OnError);
             var parsedStory = parser.Parse();
             parsedStory.countAllVisits = countAllVisits;
 
-            Story story = parsedStory.ExportRuntime(TestErrorHandler);
-            if( !testingErrors )
+            Story story = parsedStory.ExportRuntime(OnError);
+            if ( !testingErrors )
                 Assert.AreNotEqual(null, story);
 
-            // Convert to json and back again
-            if (_mode == TestMode.JsonRoundTrip && story != null)
+            if (story != null)
             {
-                var jsonStr = story.ToJsonString();
-                story = new Story(jsonStr);
+                story.onError += OnError;
+
+                // Convert to json and back again
+                if (_mode == TestMode.JsonRoundTrip)
+                {
+                    var jsonStr = story.ToJson();
+                    story = new Story(jsonStr);
+                    story.onError += OnError;
+                }
             }
 
             return story;
@@ -2989,17 +4041,17 @@ VAR x = ->place
             _testingErrors = testingErrors;
             _errorMessages.Clear();
             _warningMessages.Clear();
+            _authorMessages.Clear ();
 
-            InkParser parser = new InkParser(str, null, TestErrorHandler);
+            InkParser parser = new InkParser(str, null, OnError);
             var parsedStory = parser.Parse();
 
             if (!testingErrors) {
                 Assert.IsNotNull (parsedStory);
-                Assert.IsFalse (parsedStory.hadError);
             }
 
-            if (parsedStory) {
-                parsedStory.ExportRuntime (TestErrorHandler);
+            if (parsedStory && _errorMessages.Count == 0) {
+                parsedStory.ExportRuntime (OnError);
             }
 
             return parsedStory;
@@ -3028,14 +4080,16 @@ VAR x = ->place
             return HadErrorOrWarning(matchStr, _warningMessages);
         }
 
-        private void TestErrorHandler(string message, ErrorType errorType)
+        private void OnError(string message, ErrorType errorType)
         {
             if (_testingErrors)
             {
                 if (errorType == ErrorType.Error)
-                    _errorMessages.Add(message);
+                    _errorMessages.Add (message);
+                else if (errorType == ErrorType.Warning)
+                    _warningMessages.Add (message);
                 else
-                    _warningMessages.Add(message);
+                    _authorMessages.Add (message);
             }
             else
                 Assert.Fail(message);
@@ -3079,10 +4133,9 @@ CONST a{0} = ""World""
 CONST b{0} = 3
 ", identifier);
 
-                var compiledStory = CompileStringWithoutRuntime(storyStr, testingErrors: false);
+                var compiledStory = CompileStringWithoutRuntime(storyStr);
 
                 Assert.IsNotNull(compiledStory);
-                Assert.IsFalse(compiledStory.hadError);
             }
         }
         [Test()]
@@ -3102,10 +4155,9 @@ CONST {0}a = ""World""
 CONST {0}b = 3
 ", identifier);
 
-                var compiledStory = CompileStringWithoutRuntime(storyStr, testingErrors: false);
+                var compiledStory = CompileStringWithoutRuntime(storyStr);
 
                 Assert.IsNotNull(compiledStory);
-                Assert.IsFalse(compiledStory.hadError);
             }
         }
 
@@ -3126,10 +4178,9 @@ VAR a{0} = ""World""
 VAR b{0} = 3
 ", identifier);
 
-                var compiledStory = CompileStringWithoutRuntime(storyStr, testingErrors: false);
+                var compiledStory = CompileStringWithoutRuntime(storyStr);
 
                 Assert.IsNotNull(compiledStory);
-                Assert.IsFalse(compiledStory.hadError);
             }
         }
 
@@ -3150,10 +4201,9 @@ VAR {0}a = ""World""
 VAR {0}b = 3
 ", identifier);
 
-                var compiledStory = CompileStringWithoutRuntime(storyStr, testingErrors: false);
+                var compiledStory = CompileStringWithoutRuntime(storyStr);
 
                 Assert.IsNotNull(compiledStory);
-                Assert.IsFalse(compiledStory.hadError);
             }
         }
 
@@ -3175,10 +4225,9 @@ VAR z{0} = -> divert{0}
 -> END
 ", rangeString);
                 
-                var compiledStory = CompileStringWithoutRuntime (storyStr, testingErrors:false);
+                var compiledStory = CompileStringWithoutRuntime (storyStr);
 
                 Assert.IsNotNull (compiledStory);
-                Assert.IsFalse (compiledStory.hadError);
             }
         }
         [Test()]
@@ -3199,10 +4248,9 @@ VAR {0}z = -> {0}divert
 -> END
 ", rangeString);
 
-                var compiledStory = CompileStringWithoutRuntime(storyStr, testingErrors: false);
+                var compiledStory = CompileStringWithoutRuntime(storyStr);
 
                 Assert.IsNotNull(compiledStory);
-                Assert.IsFalse(compiledStory.hadError);
             }
         }
 

@@ -40,13 +40,13 @@ namespace Ink.Runtime
             this.itemName = nameParts [1];
         }
 
-        internal static InkListItem Null {
+        public static InkListItem Null {
             get {
                 return new InkListItem (null, null);
             }
         }
 
-        internal bool isNull {
+        public bool isNull {
             get {
                 return originName == null && itemName == null;
             }
@@ -75,13 +75,22 @@ namespace Ink.Runtime
         /// </summary>
         public override bool Equals (object obj)
         {
-            if (obj is InkListItem) {
-                var otherItem = (InkListItem)obj;
-                return otherItem.itemName   == itemName 
-                    && otherItem.originName == originName;
-            }
-
+            if (obj is InkListItem) 
+                return Equals((InkListItem)obj);
             return false;
+        }
+
+        public bool Equals (InkListItem otherItem)
+        {
+            return otherItem.itemName == itemName && otherItem.originName == originName;
+        }
+
+        public static bool operator == (InkListItem left, InkListItem right) {
+            return left.Equals(right);
+        }
+    
+        public static bool operator != (InkListItem left, InkListItem right) {
+            return !(left == right);
         }
 
         /// <summary>
@@ -115,7 +124,17 @@ namespace Ink.Runtime
         /// <summary>
         /// Create a new ink list that contains the same contents as another list.
         /// </summary>
-        public InkList (InkList otherList) : base (otherList) { _originNames = otherList.originNames; }
+        public InkList(InkList otherList) : base(otherList)
+        {
+            var otherOriginNames = otherList.originNames;
+            if( otherOriginNames != null )
+                _originNames = new List<string>(otherOriginNames);
+                
+            if (otherList.origins != null)
+            {
+                origins = new List<ListDefinition>(otherList.origins);
+            }
+        }
 
         /// <summary>
         /// Create a new empty ink list that's intended to hold items from a particular origin
@@ -126,16 +145,33 @@ namespace Ink.Runtime
             SetInitialOriginName (singleOriginListName);
 
             ListDefinition def;
-            if (originStory.listDefinitions.TryGetDefinition (singleOriginListName, out def))
+            if (originStory.listDefinitions.TryListGetDefinition (singleOriginListName, out def))
                 origins = new List<ListDefinition> { def };
             else
                 throw new System.Exception ("InkList origin could not be found in story when constructing new list: " + singleOriginListName);
         }
 
-        internal InkList (KeyValuePair<InkListItem, int> singleElement)
+        public InkList (KeyValuePair<InkListItem, int> singleElement)
         {
             Add (singleElement.Key, singleElement.Value);
-        }
+		}
+
+		/// <summary>
+		/// Converts a string to an ink list and returns for use in the story.
+		/// </summary>
+		/// <returns>InkList created from string list item</returns>
+		/// <param name="itemKey">Item key.</param>
+		/// <param name="originStory">Origin story.</param>
+		public static InkList FromString(string myListItem, Story originStory) {
+            if (string.IsNullOrEmpty(myListItem))
+                return new InkList();
+			var listValue = originStory.listDefinitions.FindSingleItemListWithName (myListItem);
+			if (listValue)
+				return new InkList (listValue.value);
+			else 
+                throw new System.Exception ("Could not find the InkListItem from the string '" + myListItem + "' to create an InkList because it doesn't exist in the original list definition in ink.");
+		}
+
 
         /// <summary>
         /// Adds the given item to the ink list. Note that the item must come from a list definition that
@@ -168,30 +204,44 @@ namespace Ink.Runtime
         /// <summary>
         /// Adds the given item to the ink list, attempting to find the origin list definition that it belongs to.
         /// The item must therefore come from a list definition that is already "known" to this list, so that the
-        /// item's value can be looked up. By "known", we mean that it already has items in it from that source, or
+        /// item's value can be looked up.
+        /// By "known", we mean that it already has items in it from that source, or
         /// it did at one point - it can't be a completely fresh empty list, or a list that only contains items from
         /// a different list definition.
+        /// You can also provide the Story object, so in the case of an unknown element, it can be created fresh
         /// </summary>
-        public void AddItem (string itemName)
+        public void AddItem(string itemName, Story storyObject = null)
         {
             ListDefinition foundListDef = null;
 
-            foreach (var origin in origins) {
-                if (origin.ContainsItemWithName (itemName)) {
-                    if (foundListDef != null) {
-                        throw new System.Exception ("Could not add the item " + itemName + " to this list because it could come from either " + origin.name + " or " + foundListDef.name);
-                    } else {
-                        foundListDef = origin;
+            if (origins != null) { 
+                foreach (var origin in origins) {
+                    if (origin.ContainsItemWithName(itemName)) {
+                        if (foundListDef != null) {
+                            throw new System.Exception("Could not add the item " + itemName + " to this list because it could come from either " + origin.name + " or " + foundListDef.name);
+                        } else {
+                            foundListDef = origin;
+                        }
                     }
                 }
             }
 
             if (foundListDef == null)
-                throw new System.Exception ("Could not add the item " + itemName + " to this list because it isn't known to any list definitions previously associated with this list.");
-
-            var item = new InkListItem (foundListDef.name, itemName);
-            var itemVal = foundListDef.ValueForItem(item);
-            this [item] = itemVal;
+            {
+                if (storyObject == null)
+                    throw new System.Exception("Could not add the item " + itemName + " to this list because it isn't known to any list definitions previously associated with this list, and no ink Story object was provided to create it from.");
+                else
+                {
+                    var newItem = FromString(itemName, storyObject).orderedItems[0];
+                    this[newItem.Key] = newItem.Value;
+                }
+            }
+            else
+            {
+                var item = new InkListItem(foundListDef.name, itemName);
+                var itemVal = foundListDef.ValueForItem(item);
+                this[item] = itemVal;
+            }
         }
 
         /// <summary>
@@ -210,8 +260,8 @@ namespace Ink.Runtime
         // necessary for certain operations (e.g. interacting with ints).
         // Only the story has access to the full set of lists, so that
         // the origin can be resolved from the originListName.
-        internal List<ListDefinition> origins;
-        internal ListDefinition originOfMaxItem {
+        public List<ListDefinition> origins;
+        public ListDefinition originOfMaxItem {
             get {
                 if (origins == null) return null;
 
@@ -228,7 +278,7 @@ namespace Ink.Runtime
         // Origin name needs to be serialised when content is empty,
         // assuming a name is availble, for list definitions with variable
         // that is currently empty.
-        internal List<string> originNames {
+        public List<string> originNames {
             get {
                 if (this.Count > 0) {
                     if (_originNames == null && this.Count > 0)
@@ -245,12 +295,12 @@ namespace Ink.Runtime
         }
         List<string> _originNames;
 
-        internal void SetInitialOriginName (string initialOriginName)
+        public void SetInitialOriginName (string initialOriginName)
         {
             _originNames = new List<string> { initialOriginName };
         }
 
-        internal void SetInitialOriginNames (List<string> initialOriginNames)
+        public void SetInitialOriginNames (List<string> initialOriginNames)
         {
             if (initialOriginNames == null)
                 _originNames = null;
@@ -351,6 +401,19 @@ namespace Ink.Runtime
         }
 
         /// <summary>
+        /// Fast test for the existence of any intersection between the current list and another
+        /// </summary>
+        public bool HasIntersection(InkList otherList)
+        {
+            foreach (var kv in this)
+            {
+                if (otherList.ContainsKey(kv.Key))
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>
         /// Returns a new list that's the same as the current one, except with the given items
         /// removed that are in the passed in list. Equivalent to calling (list1 - list2) in ink.
         /// </summary>
@@ -370,10 +433,24 @@ namespace Ink.Runtime
         /// <param name="otherList">Other list.</param>
         public bool Contains (InkList otherList)
         {
+            if( otherList.Count == 0 || this.Count == 0 )  return false;
             foreach (var kv in otherList) {
                 if (!this.ContainsKey (kv.Key)) return false;
             }
             return true;
+        }
+
+        /// <summary>
+        /// Returns true if the current list contains an item matching the given name.
+        /// </summary>
+        /// <param name="otherList">Other list.</param>
+        public bool Contains(string listItemName)
+        {
+            foreach (var kv in this)
+            {
+                if (kv.Key.itemName == listItemName) return true;
+            }
+            return false;
         }
 
         /// <summary>
@@ -431,7 +508,7 @@ namespace Ink.Runtime
                 && minItem.Value <= otherList.minItem.Value;
         }
 
-        internal InkList MaxAsList ()
+        public InkList MaxAsList ()
         {
             if (Count > 0)
                 return new InkList (maxItem);
@@ -439,12 +516,59 @@ namespace Ink.Runtime
                 return new InkList ();
         }
 
-        internal InkList MinAsList ()
+        public InkList MinAsList ()
         {
             if (Count > 0)
                 return new InkList (minItem);
             else
                 return new InkList ();
+        }
+
+        /// <summary>
+        /// Returns a sublist with the elements given the minimum and maxmimum bounds.
+        /// The bounds can either be ints which are indices into the entire (sorted) list,
+        /// or they can be InkLists themselves. These are intended to be single-item lists so
+        /// you can specify the upper and lower bounds. If you pass in multi-item lists, it'll
+        /// use the minimum and maximum items in those lists respectively.
+        /// WARNING: Calling this method requires a full sort of all the elements in the list.
+        /// </summary>
+        public InkList ListWithSubRange(object minBound, object maxBound) 
+        {
+            if (this.Count == 0) return new InkList();
+
+            var ordered = orderedItems;
+
+            int minValue = 0;
+            int maxValue = int.MaxValue;
+
+            if (minBound is int)
+            {
+                minValue = (int)minBound;
+            }
+
+            else
+            {
+                if( minBound is InkList && ((InkList)minBound).Count > 0 )
+                    minValue = ((InkList)minBound).minItem.Value;
+            }
+
+            if (maxBound is int)
+                maxValue = (int)maxBound;
+            else 
+            {
+                if (maxBound is InkList && ((InkList)maxBound).Count > 0)
+                    maxValue = ((InkList)maxBound).maxItem.Value;
+            }
+
+            var subList = new InkList();
+            subList.SetInitialOriginNames(originNames);
+            foreach(var item in ordered) {
+                if( item.Value >= minValue && item.Value <= maxValue ) {
+                    subList.Add(item.Key, item.Value);
+                }
+            }
+
+            return subList;
         }
 
         /// <summary>
@@ -476,15 +600,40 @@ namespace Ink.Runtime
             return ownHash;
         }
 
+        List<KeyValuePair<InkListItem, int>> orderedItems {
+            get {
+                var ordered = new List<KeyValuePair<InkListItem, int>>();
+                ordered.AddRange(this);
+                ordered.Sort((x, y) => {
+                    // Ensure consistent ordering of mixed lists.
+                    if( x.Value == y.Value ) {
+                        return x.Key.originName.CompareTo(y.Key.originName);
+                    } else {
+                        return x.Value.CompareTo(y.Value);
+                    }
+                });
+                return ordered;
+            }
+        }
+
+        /// <summary>
+        /// If you have an InkList that's known to have one single item, this is a convenient way to get it.
+        /// </summary>
+        public InkListItem singleItem {
+            get {
+                foreach(var item in this)
+                    return item.Key;
+                return default;
+            }
+        }
+
         /// <summary>
         /// Returns a string in the form "a, b, c" with the names of the items in the list, without
         /// the origin list definition names. Equivalent to writing {list} in ink.
         /// </summary>
         public override string ToString ()
         {
-            var ordered = new List<KeyValuePair<InkListItem, int>> ();
-            ordered.AddRange (this);
-            ordered.Sort ((x, y) => x.Value.CompareTo (y.Value));
+            var ordered = orderedItems;
 
             var sb = new StringBuilder ();
             for (int i = 0; i < ordered.Count; i++) {

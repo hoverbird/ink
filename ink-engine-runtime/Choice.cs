@@ -1,4 +1,4 @@
-﻿
+﻿using System.Collections.Generic;
 namespace Ink.Runtime
 {
     /// <summary>
@@ -18,17 +18,20 @@ namespace Ink.Runtime
         /// The target path that the Story should be diverted to if
         /// this Choice is chosen.
         /// </summary>
-        public string pathStringOnChoice { get { return choicePoint.pathStringOnChoice; } }
+        public string pathStringOnChoice {
+            get {
+                return targetPath.ToString ();
+            }
+            set {
+                targetPath = new Path (value);
+            }
+        }
 
         /// <summary>
         /// Get the path to the original choice point - where was this choice defined in the story?
         /// </summary>
         /// <value>A dot separated path into the story data.</value>
-        public string sourcePath {
-            get {
-                return choicePoint.path.componentsString;
-            }
-        }
+        public string sourcePath;
 
         /// <summary>
         /// The original index into currentChoices list on the Story when
@@ -36,23 +39,30 @@ namespace Ink.Runtime
         /// </summary>
         public int index { get; set; }
 
-        internal ChoicePoint choicePoint { get; set; }
-        internal CallStack.Thread threadAtGeneration { get; set; }
-        internal int originalThreadIndex;
+        public Path targetPath;
 
-        // Only used temporarily for loading/saving from JSON
-        internal string originalChoicePath;
+        public CallStack.Thread threadAtGeneration { get; set; }
+        public int originalThreadIndex;
 
+        public bool isInvisibleDefault;
 
-        internal Choice()
+        public List<string> tags;
+
+        public Choice()
         {
         }
 
-		internal Choice (ChoicePoint choice)
-		{
-			this.choicePoint = choice;
-		}
-
+        public Choice Clone() {
+            var copy = new Choice();
+            copy.text = text;
+            copy.sourcePath = sourcePath;
+            copy.index = index;
+            copy.targetPath = targetPath;
+            copy.originalThreadIndex = originalThreadIndex;
+            copy.isInvisibleDefault = isInvisibleDefault;
+            if( threadAtGeneration != null ) copy.threadAtGeneration = threadAtGeneration.Copy();
+            return copy;
+        }
 	}
 }
 
