@@ -621,6 +621,7 @@ Knot.
             Assert.AreEqual("gather\ntest\nchoice content\ngather\nsecond time round\n", story.ContinueMaximally());
         }
 
+        [Test()]
         public void TestElseBranches()
         {
             var storyStr =
@@ -653,7 +654,214 @@ VAR x = 3
 
             Story story = CompileString(storyStr);
 
-            Assert.AreEqual("other\nother\nother\nother\n", story.currentText);
+            Assert.AreEqual("other\nother\nother\nother\n", story.ContinueMaximally());
+        }
+
+        [Test]
+        public void TestMalformedMultilineConditionInEveryPosition(
+            [Values(false, true)] bool isSwitch,
+            [Values(0, 1, 2)] int position,
+            [Values("<prosetta id=\"X\">Ingredient has Secret:</prosetta>",
+                    "Here's the plan:", "Note the time: noon.", "other is a dancer:")] string malformedHeader)
+        {
+            var branches = new string[] { "false: first", "false: middle", "false: last" };
+            branches[position] = malformedHeader + "\n    Body.";
+            var source = (isSwitch ? "{ 1:\n" : "{\n") + "- " +
+                string.Join("\n- ", branches) + "\n}\n-> DONE";
+            var errors = new List<string>();
+            var compiler = new Ink.Compiler(source, new Ink.Compiler.Options {
+                errorHandler = (message, type) => {
+                    if (type == ErrorType.Error) errors.Add(message);
+                }
+            });
+
+            Assert.IsNull(compiler.Compile(), "Malformed branches must not produce a playable story");
+            Assert.IsTrue(errors.Exists(message => message.Contains("Branch doesn't have condition") &&
+                message.Contains("line " + (position + 2) + ":")));
+        }
+
+        [Test]
+        public void TestUnresolvedMultilineConditionInEveryPosition(
+            [Values(false, true)] bool isSwitch,
+            [Values(0, 1, 2)] int position)
+        {
+            var branches = new string[] { "false: first", "false: middle", "false: last" };
+            branches[position] = "Remember: Don't forget the keys";
+            CompileStringWithoutRuntime((isSwitch ? "{ 1:\n" : "{\n") + "- " +
+                string.Join("\n- ", branches) + "\n}", testingErrors: true);
+
+            Assert.IsTrue(HadError("Unresolved variable: Remember"));
+        }
+
+        [TestCase("{false:\n- True content: body\n- False content: body\n}")]
+        [TestCase("{false:\n- True content\n- False content: body\n}")]
+        [TestCase("{false:\n- True content: body\n- False content\n}")]
+        [TestCase("{1:\n- <prosetta>1:</prosetta> one\n- <prosetta>2:</prosetta> two\n}")]
+        [TestCase("{false:\nTrue content\n- False content\n}")]
+        public void TestMalformedColonBranchesCannotBecomeFallbacks(string source)
+        {
+            var errors = new List<string>();
+            var compiler = new Ink.Compiler(source, new Ink.Compiler.Options {
+                errorHandler = (message, type) => {
+                    if (type == ErrorType.Error) errors.Add(message);
+                }
+            });
+
+            Assert.IsNull(compiler.Compile());
+            Assert.IsNotEmpty(errors);
+        }
+
+        [Test]
+        public void TestColonFreeImplicitElse(
+            [Values(false, true)] bool isSwitch,
+            [Values(1, 2, 3)] int x)
+        {
+            var story = CompileString("VAR x = " + x + "\n" + (isSwitch ? @"
+{x:
+- 1: one
+- 2: two
+- other
+}
+" : @"
+{
+- x == 1: one
+- x == 2: two
+- other
+}
+"));
+            Assert.AreEqual(new string[] { "one\n", "two\n", "other\n" }[x - 1], story.ContinueMaximally());
+            Assert.IsEmpty(story.state.evaluationStack);
+        }
+
+        [Test]
+        public void TestColonFreeBooleanBranches([Values(false, true)] bool condition)
+        {
+            var story = CompileString("{" + (condition ? "true" : "false") + @":
+- the true branch
+- the false branch
+}
+");
+            Assert.AreEqual(condition ? "the true branch\n" : "the false branch\n", story.ContinueMaximally());
+            Assert.IsEmpty(story.state.evaluationStack);
+        }
+
+        [Test]
+        public void TestColonBearingFinalBranchIsEvaluated([Values(false, true)] bool other)
+        {
+            var story = CompileString("VAR other = " + (other ? "true" : "false") + @"
+{
+- false: first
+- false: second
+- other: conditional
+}
+After.
+");
+            Assert.AreEqual(other ? "conditional\nAfter.\n" : "After.\n", story.ContinueMaximally());
+            Assert.IsEmpty(story.state.evaluationStack);
+        }
+
+        [TestCase("- other\n    Note the time: noon.", "other\nNote the time: noon.\n")]
+        [TestCase("- other is a dancer", "other is a dancer\n")]
+        [TestCase("- other\\\n    Note the time: noon.", "other\nNote the time: noon.\n")]
+        [TestCase("-\n    Note the time: noon.", "Note the time: noon.\n")]
+        [TestCase("- other // comment: not a condition", "other\n")]
+        [TestCase("- other /* comment: not a condition */", "other\n")]
+        [TestCase("- {true: nested: text|no}", "nested: text\n")]
+        [TestCase("- {\"inner: value\"}", "inner: value\n")]
+        public void TestImplicitElseColonScope(string fallback, string expected)
+        {
+            var story = CompileString("{\n- false: first\n" + fallback + "\n}\n");
+            Assert.AreEqual(expected, story.ContinueMaximally());
+            Assert.IsEmpty(story.state.evaluationStack);
+        }
+
+        [Test]
+        public void TestExplicitSequenceColonTextIsPreserved()
+        {
+            var story = CompileString(@"
+-> sequence ->
+-> sequence ->
+-> DONE
+== sequence ==
+{cycle:
+- Here's the plan: leave at dawn.
+- Note the time: noon.
+}
+->->
+");
+            Assert.AreEqual("Here's the plan: leave at dawn.\nNote the time: noon.\n", story.ContinueMaximally());
+        }
+
+        [TestCase("", "- else: first\n- true: last", "should always be the final one")]
+        [TestCase("1:", "- else: first\n- 1: last", "should always be the final one")]
+        [TestCase("true:", "- else: first\n- text", "should always be the final one")]
+        [TestCase("", "- else: first\n- else: last", "Multiple 'else' cases")]
+        [TestCase("1:", "- 1: first\n- else: middle\n- else: last", "Multiple 'else' cases")]
+        public void TestMultilineElseMustBeUniqueAndFinal(string query, string branches, string error)
+        {
+            CompileStringWithoutRuntime("{" + query + "\n" + branches + "\n}", testingErrors: true);
+            Assert.IsTrue(HadError(error));
+        }
+
+        [Test]
+        public void TestExplicitMultilineElseCanContainColonText()
+        {
+            var story = CompileString(@"
+{
+    - false: Welcome back.
+    - else:
+        Here's the plan:
+        We leave at dawn.
+}
+{ 1:
+    - 2: two
+    - else: Note the time: noon.
+}
+");
+            Assert.AreEqual("Here's the plan:\nWe leave at dawn.\nNote the time: noon.\n", story.ContinueMaximally());
+            Assert.IsEmpty(story.state.evaluationStack);
+        }
+
+        [Test]
+        public void TestConditionalFormsPreserveOutputAndCleanStack(
+            [Values(false, true)] bool condition)
+        {
+            var story = CompileString(@"
+VAR condition = " + (condition ? "true" : "false") + @"
+{condition: inline true|inline false}
+{condition:
+    body true
+- else: body false
+}
+{condition:
+- dashed true
+- else: dashed false
+}
+{condition:
+- single true
+}
+{condition:
+- else: only false
+}
+{
+- condition: tested true
+- else: tested false
+}
+{condition:
+- true: switch true
+- false: switch false
+}
+{
+- false: never
+- condition: final true
+}
+After.
+");
+            var expected = condition
+                ? "inline true\nbody true\ndashed true\nsingle true\ntested true\nswitch true\nfinal true\nAfter.\n"
+                : "inline false\nbody false\ndashed false\nonly false\ntested false\nswitch false\nAfter.\n";
+            Assert.AreEqual(expected, story.ContinueMaximally());
+            Assert.IsEmpty(story.state.evaluationStack);
         }
 
         [Test()]

@@ -80,6 +80,18 @@ namespace Ink
                 // }
                 if (initialQueryExpression) {
 
+                    // An explicit else is only valid once, at the end, in every multiline form.
+                    for (int i = 0; i < alternatives.Count - 1; ++i) {
+                        if (alternatives [i].isElse) {
+                            var finalClause = alternatives [alternatives.Count - 1];
+                            if (finalClause.isElse) {
+                                ErrorWithParsedObject ("Multiple 'else' cases. Can have a maximum of one, at the end.", finalClause);
+                            } else {
+                                ErrorWithParsedObject ("'else' case in conditional should always be the final one", alternatives [i]);
+                            }
+                        }
+                    }
+
                     bool earlierBranchesHaveOwnExpression = false;
                     for (int i = 0; i < alternatives.Count; ++i) {
                         var branch = alternatives [i];
@@ -99,7 +111,7 @@ namespace Ink
                         else if (earlierBranchesHaveOwnExpression && isLast) {
                             branch.matchingEquality = true;
                             branch.isElse = true;
-                        } 
+                        }
 
                         // Binary condition:
                         // { trueOrFalse:
@@ -127,7 +139,7 @@ namespace Ink
                 //   - x < 3:  less than three
                 // }
                 else {
-                    
+
                     for (int i = 0; i < alternatives.Count; ++i) {
                         var alt = alternatives [i];
                         bool isLast = (i == alternatives.Count - 1);
@@ -225,6 +237,8 @@ namespace Ink
 
             Whitespace ();
 
+            int branchLineNumber = lineIndex + 1;
+
             Expression expr = null;
             bool isElse = Parse(ElseExpression) != null;
 
@@ -232,6 +246,19 @@ namespace Ink
                 expr = Parse(ConditionExpression);
 
             List<Parsed.Object> content = StatementsAtLevel (StatementLevel.InnerBlock);
+
+            // A colon in opening-line text declares a condition, even if parsing it
+            // failed. Never reinterpret that text as a boolean body or implicit else.
+            // Inspect only direct text: colons in nested logic belong to that logic.
+            if (expr == null && !isElse && content != null) {
+                foreach (var text in content.OfType<Text> ()) {
+                    if (text.debugMetadata.startLineNumber == branchLineNumber && text.text.Split ('\n', '\r')[0].Contains (":")) {
+                        ErrorWithParsedObject ("Branch doesn't have condition. A ':' on the branch's opening line requires a valid condition before it. Use '- else:' for fallback text containing ':', or put the text on the following line.", text);
+                        break;
+                    }
+                }
+            }
+
             if (expr == null && content == null) {
                 Error ("expected content for the conditional branch following '-'");
 

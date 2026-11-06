@@ -1437,6 +1437,27 @@ And using this form we can include 'else-if' conditions:
 
 (Note, as with everything else, the white-space is purely for readability and has no syntactic meaning.)
 
+A final branch can omit its condition and act as an implicit else, provided there is no colon in the text on its opening line:
+
+	{
+	- x == 1: one
+	- x == 2: two
+	- other
+	}
+
+A colon on a branch's opening line declares a condition. The text before it must parse as an expression; an invalid expression is a compile error even in the final branch. For example, `- other: text` evaluates `other` as a condition, while `- other is a dancer: text` is an error. This also applies to the bare true and false branches of a multiline boolean conditional. Without colons, `{flag:` followed by `- the true branch` and `- the false branch` keeps its existing meaning.
+
+For fallback prose containing a colon, use an explicit `- else:`, or put the prose on the following line:
+
+	{
+	- seen_before: Welcome back.
+	- else:
+		Here's the plan:
+		We leave at dawn.
+	}
+
+Only the branch's opening-line text is checked. Colons in comments, nested logic (such as `- {flag:yes|no}`), or text on later lines do not declare a branch condition. Inline conditionals and sequence syntax are unchanged.
+
 ### Switch blocks
 
 And there's also an actual switch statement:
