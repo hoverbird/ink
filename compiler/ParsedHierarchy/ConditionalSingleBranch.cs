@@ -8,7 +8,7 @@ namespace Ink.Parsed
         // bool condition, e.g.:
         // { 5 == 4:
         //   - the true branch
-        //   - the false branch
+        //   - else: the false branch
         // }
         public bool isTrueBranch { get; set; }
 

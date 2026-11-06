@@ -481,13 +481,13 @@ two ({num})
 }
 { 2*2 > 3:
    - true
-   - not true
+   - else: not true
 }
 {
    - 1 > 3: not true
-   - { 2+2 == 4:
+   - else: { 2+2 == 4:
         - true
-        - not true
+        - else: not true
    }
 }
 { 2*3:
@@ -621,6 +621,7 @@ Knot.
             Assert.AreEqual("gather\ntest\nchoice content\ngather\nsecond time round\n", story.ContinueMaximally());
         }
 
+        [Test()]
         public void TestElseBranches()
         {
             var storyStr =
@@ -631,12 +632,6 @@ VAR x = 3
     - x == 1: one
     - x == 2: two
     - else: other
-}
-
-{
-    - x == 1: one
-    - x == 2: two
-    - other
 }
 
 { x == 4:
@@ -653,7 +648,131 @@ VAR x = 3
 
             Story story = CompileString(storyStr);
 
-            Assert.AreEqual("other\nother\nother\nother\n", story.currentText);
+            Assert.AreEqual("other\nother\nother\n", story.ContinueMaximally());
+        }
+
+        [Test]
+        public void TestMalformedMultilineConditionInEveryPosition(
+            [Values(false, true)] bool isSwitch,
+            [Values(0, 1, 2)] int position,
+            [Values("<prosetta id=\"X\">Ingredient has Secret:</prosetta>",
+                    "Here's the plan:", "Note the time: noon.",
+                    "false", "else", "")] string malformedHeader)
+        {
+            var branches = new string[] { "false: first", "false: middle", "false: last" };
+            branches[position] = malformedHeader + "\n    Body.";
+            var source = (isSwitch ? "{ 1:\n" : "{\n") + "- " +
+                string.Join("\n- ", branches) + "\n}\n-> DONE";
+            var errors = new List<string>();
+            var compiler = new Ink.Compiler(source, new Ink.Compiler.Options {
+                errorHandler = (message, type) => {
+                    if (type == ErrorType.Error) errors.Add(message);
+                }
+            });
+
+            Assert.IsNull(compiler.Compile(), "Malformed branches must not produce a playable story");
+            Assert.IsTrue(errors.Exists(message => message.Contains("Branch doesn't have condition")));
+        }
+
+        [Test]
+        public void TestUnresolvedMultilineConditionInEveryPosition(
+            [Values(false, true)] bool isSwitch,
+            [Values(0, 1, 2)] int position)
+        {
+            var branches = new string[] { "false: first", "false: middle", "false: last" };
+            branches[position] = "Remember: Don't forget the keys";
+            CompileStringWithoutRuntime((isSwitch ? "{ 1:\n" : "{\n") + "- " +
+                string.Join("\n- ", branches) + "\n}", testingErrors: true);
+
+            Assert.IsTrue(HadError("Unresolved variable: Remember"));
+        }
+
+        [TestCase("{false:\n- True content\n- False content\n}")]
+        [TestCase("{1:\n- <prosetta>1:</prosetta> one\n- <prosetta>2:</prosetta> two\n}")]
+        [TestCase("{false:\nTrue content\n- False content\n}")]
+        public void TestMultilineFallbackRequiresElse(string source)
+        {
+            var errors = new List<string>();
+            var compiler = new Ink.Compiler(source, new Ink.Compiler.Options {
+                errorHandler = (message, type) => {
+                    if (type == ErrorType.Error) errors.Add(message);
+                }
+            });
+
+            Assert.IsNull(compiler.Compile());
+            Assert.IsTrue(errors.Exists(message => message.Contains("else:")));
+        }
+
+        [TestCase("", "- else: first\n- true: last", "should always be the final one")]
+        [TestCase("1:", "- else: first\n- 1: last", "should always be the final one")]
+        [TestCase("true:", "- else: first\n- text", "should always be the final one")]
+        [TestCase("", "- else: first\n- else: last", "Multiple 'else' cases")]
+        [TestCase("1:", "- 1: first\n- else: middle\n- else: last", "Multiple 'else' cases")]
+        public void TestMultilineElseMustBeUniqueAndFinal(string query, string branches, string error)
+        {
+            CompileStringWithoutRuntime("{" + query + "\n" + branches + "\n}", testingErrors: true);
+            Assert.IsTrue(HadError(error));
+        }
+
+        [Test]
+        public void TestExplicitMultilineElseCanContainColonText()
+        {
+            var story = CompileString(@"
+{
+    - false: Welcome back.
+    - else:
+        Here's the plan:
+        We leave at dawn.
+}
+{ 1:
+    - 2: two
+    - else: Note the time: noon.
+}
+");
+            Assert.AreEqual("Here's the plan:\nWe leave at dawn.\nNote the time: noon.\n", story.ContinueMaximally());
+            Assert.IsEmpty(story.state.evaluationStack);
+        }
+
+        [Test]
+        public void TestConditionalFormsPreserveOutputAndCleanStack(
+            [Values(false, true)] bool condition)
+        {
+            var story = CompileString(@"
+VAR condition = " + (condition ? "true" : "false") + @"
+{condition: inline true|inline false}
+{condition:
+    body true
+- else: body false
+}
+{condition:
+- dashed true
+- else: dashed false
+}
+{condition:
+- single true
+}
+{condition:
+- else: only false
+}
+{
+- condition: tested true
+- else: tested false
+}
+{condition:
+- true: switch true
+- false: switch false
+}
+{
+- false: never
+- condition: final true
+}
+After.
+");
+            var expected = condition
+                ? "inline true\nbody true\ndashed true\nsingle true\ntested true\nswitch true\nfinal true\nAfter.\n"
+                : "inline false\nbody false\ndashed false\nonly false\ntested false\nswitch false\nAfter.\n";
+            Assert.AreEqual(expected, story.ContinueMaximally());
+            Assert.IsEmpty(story.state.evaluationStack);
         }
 
         [Test()]
