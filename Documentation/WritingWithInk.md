@@ -1437,7 +1437,17 @@ And using this form we can include 'else-if' conditions:
 
 (Note, as with everything else, the white-space is purely for readability and has no syntactic meaning.)
 
-Multiline fallback branches must start with `- else:`. A final branch without a valid condition is a compile error, just like an earlier branch. Text containing a colon belongs after `else:`, for example:
+A final branch can omit its condition and act as an implicit else, provided there is no colon in the text on its opening line:
+
+	{
+	- x == 1: one
+	- x == 2: two
+	- other
+	}
+
+A colon on a branch's opening line declares a condition. The text before it must parse as an expression; an invalid expression is a compile error even in the final branch. For example, `- other: text` evaluates `other` as a condition, while `- other is a dancer: text` is an error. This also applies to the bare true and false branches of a multiline boolean conditional. Without colons, `{flag:` followed by `- the true branch` and `- the false branch` keeps its existing meaning.
+
+For fallback prose containing a colon, use an explicit `- else:`, or put the prose on the following line:
 
 	{
 	- seen_before: Welcome back.
@@ -1446,7 +1456,7 @@ Multiline fallback branches must start with `- else:`. A final branch without a 
 		We leave at dawn.
 	}
 
-Older ink versions allowed an unconditioned final branch to act as an implicit else. To update such stories, add `else:` after that branch's `-`, keeping its text after `else:` or on the following line. This also applies to the second branch of a multiline boolean conditional. A bare first branch under an initial condition (such as `{flag:`) remains its true branch; inline `{flag:yes|no}` conditionals and sequence syntax are unchanged.
+Only the branch's opening-line text is checked. Colons in comments, nested logic (such as `- {flag:yes|no}`), or text on later lines do not declare a branch condition. Inline conditionals and sequence syntax are unchanged.
 
 ### Switch blocks
 

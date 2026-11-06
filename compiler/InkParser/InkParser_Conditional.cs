@@ -74,40 +74,60 @@ namespace Ink
                     alternatives.Insert (0, emptyTrueBranch);
                 }
 
-                // An explicit else is only valid once, at the end, in every multiline form.
-                for (int i = 0; i < alternatives.Count - 1; ++i) {
-                    if (alternatives [i].isElse) {
-                        var finalClause = alternatives [alternatives.Count - 1];
-                        if (finalClause.isElse) {
-                            ErrorWithParsedObject ("Multiple 'else' cases. Can have a maximum of one, at the end.", finalClause);
-                        } else {
-                            ErrorWithParsedObject ("'else' case in conditional should always be the final one", alternatives [i]);
-                        }
-                    }
-                }
-
                 // Like a switch statement
                 // { initialQueryExpression:
                 //    ... match the expression
                 // }
                 if (initialQueryExpression) {
 
-                    bool branchesHaveOwnExpression = alternatives.Any (branch => branch.ownExpression != null);
+                    // An explicit else is only valid once, at the end, in every multiline form.
+                    for (int i = 0; i < alternatives.Count - 1; ++i) {
+                        if (alternatives [i].isElse) {
+                            var finalClause = alternatives [alternatives.Count - 1];
+                            if (finalClause.isElse) {
+                                ErrorWithParsedObject ("Multiple 'else' cases. Can have a maximum of one, at the end.", finalClause);
+                            } else {
+                                ErrorWithParsedObject ("'else' case in conditional should always be the final one", alternatives [i]);
+                            }
+                        }
+                    }
+
+                    bool earlierBranchesHaveOwnExpression = false;
                     for (int i = 0; i < alternatives.Count; ++i) {
                         var branch = alternatives [i];
+                        bool isLast = (i == alternatives.Count - 1);
 
-                        // Switch cases match the initial query by equality. The else
-                        // also needs this flag to tidy up the evaluation stack.
-                        if (branch.ownExpression || branch.isElse) {
-                            branch.matchingEquality = branchesHaveOwnExpression;
+                        // Matching equality with initial query expression
+                        // We set this flag even for the "else" clause so that
+                        // it knows to tidy up the evaluation stack at the end
+
+                        // Match query
+                        if (branch.ownExpression) {
+                            branch.matchingEquality = true;
+                            earlierBranchesHaveOwnExpression = true;
                         }
 
-                        // A bare first branch is the body of a boolean condition.
-                        // If any branch has a case expression, all cases must have one.
-                        else if (!branchesHaveOwnExpression && i == 0) {
-                            branch.isTrueBranch = true;
-                        } else {
-                            ErrorWithParsedObject ("Branch doesn't have condition. Expected an expression followed by ':', or '- else:' for a fallback.", branch);
+                        // Else (final branch)
+                        else if (earlierBranchesHaveOwnExpression && isLast) {
+                            branch.matchingEquality = true;
+                            branch.isElse = true;
+                        }
+
+                        // Binary condition:
+                        // { trueOrFalse:
+                        //    - when true
+                        //    - when false
+                        // }
+                        else {
+
+                            if (!isLast && alternatives.Count > 2) {
+                                ErrorWithParsedObject ("Only final branch can be an 'else'. Did you miss a ':'?", branch);
+                            } else {
+                                if (i == 0)
+                                    branch.isTrueBranch = true;
+                                else
+                                    branch.isElse = true;
+                            }
                         }
                     }
                 } 
@@ -119,9 +139,27 @@ namespace Ink
                 //   - x < 3:  less than three
                 // }
                 else {
-                    foreach (var alt in alternatives) {
-                        if (alt.ownExpression == null && !alt.isElse) {
-                            ErrorWithParsedObject ("Branch doesn't have condition. Expected an expression followed by ':', or '- else:' for a fallback.", alt);
+
+                    for (int i = 0; i < alternatives.Count; ++i) {
+                        var alt = alternatives [i];
+                        bool isLast = (i == alternatives.Count - 1);
+                        if (alt.ownExpression == null) {
+                            if (isLast) {
+                                alt.isElse = true;
+                            } else {
+                                if (alt.isElse) {
+                                    // Do we ALSO have a valid "else" at the end? Let's report the error there.
+                                    var finalClause = alternatives [alternatives.Count - 1];
+                                    if (finalClause.isElse) {
+                                        ErrorWithParsedObject ("Multiple 'else' cases. Can have a maximum of one, at the end.", finalClause);
+                                    } else {
+                                        ErrorWithParsedObject ("'else' case in conditional should always be the final one", alt);
+                                    }
+                                } else {
+                                    ErrorWithParsedObject ("Branch doesn't have condition. Are you missing a ':'? ", alt);
+                                }
+
+                            }
                         }
                     }
                         
@@ -131,6 +169,10 @@ namespace Ink
                 }
             }
 
+            // TODO: Come up with water-tight error conditions... it's quite a flexible system!
+            // e.g.
+            //   - inline conditionals must have exactly 1 or 2 alternatives
+            //   - multiline expression shouldn't have mixed existence of branch-conditions?
             if (alternatives == null)
                 return null;
 
@@ -195,6 +237,8 @@ namespace Ink
 
             Whitespace ();
 
+            int branchLineNumber = lineIndex + 1;
+
             Expression expr = null;
             bool isElse = Parse(ElseExpression) != null;
 
@@ -202,6 +246,19 @@ namespace Ink
                 expr = Parse(ConditionExpression);
 
             List<Parsed.Object> content = StatementsAtLevel (StatementLevel.InnerBlock);
+
+            // A colon in opening-line text declares a condition, even if parsing it
+            // failed. Never reinterpret that text as a boolean body or implicit else.
+            // Inspect only direct text: colons in nested logic belong to that logic.
+            if (expr == null && !isElse && content != null) {
+                foreach (var text in content.OfType<Text> ()) {
+                    if (text.debugMetadata.startLineNumber == branchLineNumber && text.text.Split ('\n', '\r')[0].Contains (":")) {
+                        ErrorWithParsedObject ("Branch doesn't have condition. A ':' on the branch's opening line requires a valid condition before it. Use '- else:' for fallback text containing ':', or put the text on the following line.", text);
+                        break;
+                    }
+                }
+            }
+
             if (expr == null && content == null) {
                 Error ("expected content for the conditional branch following '-'");
 

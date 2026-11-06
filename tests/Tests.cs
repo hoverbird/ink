@@ -481,13 +481,13 @@ two ({num})
 }
 { 2*2 > 3:
    - true
-   - else: not true
+   - not true
 }
 {
    - 1 > 3: not true
-   - else: { 2+2 == 4:
+   - { 2+2 == 4:
         - true
-        - else: not true
+        - not true
    }
 }
 { 2*3:
@@ -634,6 +634,12 @@ VAR x = 3
     - else: other
 }
 
+{
+    - x == 1: one
+    - x == 2: two
+    - other
+}
+
 { x == 4:
   - The main clause
   - else: other
@@ -648,7 +654,7 @@ VAR x = 3
 
             Story story = CompileString(storyStr);
 
-            Assert.AreEqual("other\nother\nother\n", story.ContinueMaximally());
+            Assert.AreEqual("other\nother\nother\nother\n", story.ContinueMaximally());
         }
 
         [Test]
@@ -656,8 +662,7 @@ VAR x = 3
             [Values(false, true)] bool isSwitch,
             [Values(0, 1, 2)] int position,
             [Values("<prosetta id=\"X\">Ingredient has Secret:</prosetta>",
-                    "Here's the plan:", "Note the time: noon.",
-                    "false", "else", "")] string malformedHeader)
+                    "Here's the plan:", "Note the time: noon.", "other is a dancer:")] string malformedHeader)
         {
             var branches = new string[] { "false: first", "false: middle", "false: last" };
             branches[position] = malformedHeader + "\n    Body.";
@@ -671,7 +676,8 @@ VAR x = 3
             });
 
             Assert.IsNull(compiler.Compile(), "Malformed branches must not produce a playable story");
-            Assert.IsTrue(errors.Exists(message => message.Contains("Branch doesn't have condition")));
+            Assert.IsTrue(errors.Exists(message => message.Contains("Branch doesn't have condition") &&
+                message.Contains("line " + (position + 2) + ":")));
         }
 
         [Test]
@@ -687,10 +693,12 @@ VAR x = 3
             Assert.IsTrue(HadError("Unresolved variable: Remember"));
         }
 
-        [TestCase("{false:\n- True content\n- False content\n}")]
+        [TestCase("{false:\n- True content: body\n- False content: body\n}")]
+        [TestCase("{false:\n- True content\n- False content: body\n}")]
+        [TestCase("{false:\n- True content: body\n- False content\n}")]
         [TestCase("{1:\n- <prosetta>1:</prosetta> one\n- <prosetta>2:</prosetta> two\n}")]
         [TestCase("{false:\nTrue content\n- False content\n}")]
-        public void TestMultilineFallbackRequiresElse(string source)
+        public void TestMalformedColonBranchesCannotBecomeFallbacks(string source)
         {
             var errors = new List<string>();
             var compiler = new Ink.Compiler(source, new Ink.Compiler.Options {
@@ -700,7 +708,88 @@ VAR x = 3
             });
 
             Assert.IsNull(compiler.Compile());
-            Assert.IsTrue(errors.Exists(message => message.Contains("else:")));
+            Assert.IsNotEmpty(errors);
+        }
+
+        [Test]
+        public void TestColonFreeImplicitElse(
+            [Values(false, true)] bool isSwitch,
+            [Values(1, 2, 3)] int x)
+        {
+            var story = CompileString("VAR x = " + x + "\n" + (isSwitch ? @"
+{x:
+- 1: one
+- 2: two
+- other
+}
+" : @"
+{
+- x == 1: one
+- x == 2: two
+- other
+}
+"));
+            Assert.AreEqual(new string[] { "one\n", "two\n", "other\n" }[x - 1], story.ContinueMaximally());
+            Assert.IsEmpty(story.state.evaluationStack);
+        }
+
+        [Test]
+        public void TestColonFreeBooleanBranches([Values(false, true)] bool condition)
+        {
+            var story = CompileString("{" + (condition ? "true" : "false") + @":
+- the true branch
+- the false branch
+}
+");
+            Assert.AreEqual(condition ? "the true branch\n" : "the false branch\n", story.ContinueMaximally());
+            Assert.IsEmpty(story.state.evaluationStack);
+        }
+
+        [Test]
+        public void TestColonBearingFinalBranchIsEvaluated([Values(false, true)] bool other)
+        {
+            var story = CompileString("VAR other = " + (other ? "true" : "false") + @"
+{
+- false: first
+- false: second
+- other: conditional
+}
+After.
+");
+            Assert.AreEqual(other ? "conditional\nAfter.\n" : "After.\n", story.ContinueMaximally());
+            Assert.IsEmpty(story.state.evaluationStack);
+        }
+
+        [TestCase("- other\n    Note the time: noon.", "other\nNote the time: noon.\n")]
+        [TestCase("- other is a dancer", "other is a dancer\n")]
+        [TestCase("- other\\\n    Note the time: noon.", "other\nNote the time: noon.\n")]
+        [TestCase("-\n    Note the time: noon.", "Note the time: noon.\n")]
+        [TestCase("- other // comment: not a condition", "other\n")]
+        [TestCase("- other /* comment: not a condition */", "other\n")]
+        [TestCase("- {true: nested: text|no}", "nested: text\n")]
+        [TestCase("- {\"inner: value\"}", "inner: value\n")]
+        public void TestImplicitElseColonScope(string fallback, string expected)
+        {
+            var story = CompileString("{\n- false: first\n" + fallback + "\n}\n");
+            Assert.AreEqual(expected, story.ContinueMaximally());
+            Assert.IsEmpty(story.state.evaluationStack);
+        }
+
+        [Test]
+        public void TestExplicitSequenceColonTextIsPreserved()
+        {
+            var story = CompileString(@"
+-> sequence ->
+-> sequence ->
+-> DONE
+== sequence ==
+{cycle:
+- Here's the plan: leave at dawn.
+- Note the time: noon.
+}
+->->
+");
+            Assert.AreEqual("Here's the plan: leave at dawn.\nNote the time: noon.\n", story.ContinueMaximally());
         }
 
         [TestCase("", "- else: first\n- true: last", "should always be the final one")]
