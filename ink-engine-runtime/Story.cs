@@ -2587,10 +2587,6 @@ namespace Ink.Runtime
                 else break;
             }
 
-            // If there is no inner container, however, just use the outer one.
-            if (innerWeaveContainer == null) {
-                innerWeaveContainer = flowContainer;
-            }
             // Any initial tag objects count as the "main tags" associated with that story/knot/stitch
             bool inTag = false;
             List<string> tags = null;
